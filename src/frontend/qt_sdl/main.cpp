@@ -372,12 +372,7 @@ int main(int argc, char** argv)
                               "melonDS",
                               "Unable to write to config.\nPlease check the write permissions of the folder you placed melonDS in.");
 
-    if (!WideMelon::Configure(*options))
-    {
-        delete options;
-        SDL_Quit();
-        return 0;
-    }
+    WideMelon::Configure(*options);
 
     camStarted[0] = false;
     camStarted[1] = false;

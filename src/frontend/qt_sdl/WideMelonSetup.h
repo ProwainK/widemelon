@@ -1,4 +1,4 @@
-// WideMelon's small native startup dialog.
+// WideMelon's native display settings.
 // Copyright (C) 2026 WideMelon contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
@@ -10,10 +10,9 @@ class QWidget;
 namespace WideMelon
 {
 
-// Shows the WideMelon configuration dialog unless a profile was supplied through
-// the environment for automated/headless use. Returns false when the user
-// cancels startup.
-bool Configure(CLI::CommandLineOptions& options);
+// Applies the saved profile, or a profile supplied through WIDEMELON_* for
+// automated/headless use. Startup never waits for a configuration dialog.
+void Configure(CLI::CommandLineOptions& options);
 
 // Opens the saved WideMelon profile from the regular melonDS window. Renderer
 // dimensions are process-wide, so changes take effect on the next launch.
