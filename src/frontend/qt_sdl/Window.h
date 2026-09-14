@@ -40,7 +40,9 @@
 
 class EmuInstance;
 class EmuThread;
+class QLabel;
 class QListWidget;
+class QPushButton;
 
 const int kMaxRecentROMs = 10;
 
@@ -198,9 +200,13 @@ private:
     QMenu *recentMenu;
     QWidget* homePanel = nullptr;
     QListWidget* homeRecentList = nullptr;
+    QPushButton* homePhoneServerButton = nullptr;
+    QLabel* homePhoneQr = nullptr;
+    QLabel* homePhoneHint = nullptr;
     void updateRecentFilesMenu();
     void createHomePanel();
     void updateHomePanel();
+    void updateHomePhoneUi();
     void openRecentFile(const QString& filename);
 
     bool verifySetup();
