@@ -10,6 +10,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QPlainTextEdit;
+class QPixmap;
 class QPushButton;
 class QSpinBox;
 class QTimer;
@@ -20,7 +21,7 @@ class PhoneScreenDialog final : public QDialog
     Q_OBJECT
 
 public:
-    PhoneScreenDialog(PhoneBridgeManager* manager, bool startup, QWidget* parent = nullptr);
+    PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* parent = nullptr);
 
     void positionBeside(QWidget* owner);
 
@@ -39,7 +40,6 @@ private:
     void checkFirewall();
 
     PhoneBridgeManager* manager;
-    bool startup;
     QComboBox* interfaceBox;
     QSpinBox* port;
     QSpinBox* quality;
@@ -67,7 +67,6 @@ private:
 
 namespace WideMelon
 {
-bool PhoneBridgeRequestedForSession();
-void ClearPhoneBridgeSessionRequest();
+QPixmap CreatePhonePairingQrCode(const QString& text, int size);
 void OpenPhoneScreenSettings(PhoneBridgeManager* manager, QWidget* parent);
 }

@@ -4,7 +4,6 @@
 #include "PhoneScreenDialog.h"
 
 #include <algorithm>
-#include <atomic>
 
 #include <QApplication>
 #include <QCheckBox>
@@ -43,7 +42,6 @@
 
 namespace
 {
-std::atomic<bool> requestedForSession {false};
 constexpr int kPairingQrSize = 168;
 
 QString addressLabel(const QString& value)
@@ -60,14 +58,16 @@ QString addressLabel(const QString& value)
     return value + " (non-private; unsafe)";
 }
 
-QPixmap pairingQrCode(const QString& text)
+}
+
+QPixmap WideMelon::CreatePhonePairingQrCode(const QString& text, int size)
 {
     if (text.isEmpty()) return {};
     const QByteArray utf8 = text.toUtf8();
     const qrcodegen::QrCode code = qrcodegen::QrCode::encodeText(
         utf8.constData(), qrcodegen::QrCode::Ecc::MEDIUM);
     constexpr int border = 4;
-    const int scale = std::max(1, kPairingQrSize / (code.getSize() + border * 2));
+    const int scale = std::max(1, size / (code.getSize() + border * 2));
     const int pixels = (code.getSize() + border * 2) * scale;
     QImage image(pixels, pixels, QImage::Format_RGB32);
     image.fill(Qt::white);
@@ -80,6 +80,9 @@ QPixmap pairingQrCode(const QString& text)
                 painter.drawRect((x + border) * scale, (y + border) * scale, scale, scale);
     return QPixmap::fromImage(image);
 }
+
+namespace
+{
 
 void showFirewallGuide(QWidget* parent, const PhoneFirewallResult& detected,
                        const QString& address, quint16 port)
@@ -243,10 +246,10 @@ void showFirewallGuide(QWidget* parent, const PhoneFirewallResult& detected,
 }
 }
 
-PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, bool startup, QWidget* parent)
-    : QDialog(parent, Qt::Tool), manager(manager), startup(startup)
+PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* parent)
+    : QDialog(parent, Qt::Tool), manager(manager)
 {
-    setAttribute(Qt::WA_DeleteOnClose, !startup);
+    setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle("Phone screen & controller");
     setModal(false);
     resize(560, 680);
@@ -361,8 +364,8 @@ PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, bool startup, 
     settingsLayout->addWidget(logs, 1);
 
     auto actions = new QGridLayout;
-    startButton = new QPushButton(startup ? "Enable for this session" : "Start server");
-    stopButton = new QPushButton(startup ? "Disable for this session" : "Stop server");
+    startButton = new QPushButton("Start server");
+    stopButton = new QPushButton("Stop server");
     auto disconnect = new QPushButton("Disconnect phone");
     auto regenerate = new QPushButton("Generate new code");
     auto revoke = new QPushButton("Revoke pairing");
@@ -517,9 +520,7 @@ void PhoneScreenDialog::startOrArm()
     }
     if (!confirmUnsafeStart()) return;
     applyControls();
-    if (startup)
-        requestedForSession.store(true);
-    else if (manager && !manager->start())
+    if (manager && !manager->start())
         QMessageBox::critical(this, "Phone bridge failed", manager->lastError());
     else
         checkFirewall();
@@ -552,8 +553,7 @@ void PhoneScreenDialog::checkFirewall()
 
 void PhoneScreenDialog::stopOrDisarm()
 {
-    if (startup) requestedForSession.store(false);
-    else if (manager) manager->stop();
+    if (manager) manager->stop();
     updateUi();
 }
 
@@ -579,10 +579,7 @@ void PhoneScreenDialog::updateUi()
         firewallChecked = false;
         firewallResult = {};
     }
-    if (startup)
-        status->setText(requestedForSession.load() ? "Armed — starts after Start melonDS" : "Off");
-    else
-        status->setText(manager ? manager->statusText() : "Unavailable");
+    status->setText(manager ? manager->statusText() : "Unavailable");
     const QString host = interfaceBox->currentData().toString();
     address->setText(host.isEmpty() ? "Unavailable" : QString("http://%1:%2/").arg(host).arg(port->value()));
     const QString pairUrl = listening ? manager->pairingUrl() : QString();
@@ -591,12 +588,12 @@ void PhoneScreenDialog::updateUi()
         displayedPairingUrl = pairUrl;
         // QLabel::setText clears a pixmap, even when the new text is empty.
         if (pairUrl.isEmpty()) pairingQr->setText("Start the server to create a pairing code.");
-        else pairingQr->setPixmap(pairingQrCode(pairUrl));
+        else pairingQr->setPixmap(WideMelon::CreatePhonePairingQrCode(pairUrl, kPairingQrSize));
     }
     pairingCode->setText(listening ? manager->pairingCode() : QStringLiteral("—"));
     connectedClient->setText(connected ? manager->connectedClientLabel() : QStringLiteral("None"));
-    startButton->setEnabled(!host.isEmpty() && (startup ? !requestedForSession.load() : !listening));
-    stopButton->setEnabled(startup ? requestedForSession.load() : listening);
+    startButton->setEnabled(!host.isEmpty() && !listening);
+    stopButton->setEnabled(listening);
     firewallButton->setEnabled(listening);
     interfaceBox->setEnabled(!listening);
     port->setEnabled(!listening);
@@ -646,12 +643,9 @@ void PhoneScreenDialog::exportDiagnostics()
 
 namespace WideMelon
 {
-bool PhoneBridgeRequestedForSession() { return requestedForSession.load(); }
-void ClearPhoneBridgeSessionRequest() { requestedForSession.store(false); }
-
 void OpenPhoneScreenSettings(PhoneBridgeManager* manager, QWidget* parent)
 {
-    auto dialog = new PhoneScreenDialog(manager, false, parent);
+    auto dialog = new PhoneScreenDialog(manager, parent);
     dialog->show();
     dialog->positionBeside(parent);
     dialog->raise();
