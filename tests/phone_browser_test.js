@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-function page(storageBlocked = false) {
+function page(storageBlocked = false, savedMapping = null) {
   const elements = new Map();
   function element() {
     const handlers = new Map();
@@ -33,7 +33,13 @@ function page(storageBlocked = false) {
     button.dataset.button = String(bit);
     return button;
   });
-  document.querySelectorAll = selector => selector.includes('[data-button]') ? buttons : [];
+  const mapTargets = Array.from({length: 12}, (_, bit) => {
+    const target = document.getElementById(`map-${bit}`);
+    target.dataset.dsBit = String(bit);
+    return target;
+  });
+  document.querySelectorAll = selector => selector.includes('[data-button]') ? buttons
+    : selector === '#controller-diagram .map-target' ? mapTargets : [];
   const draws = [];
   document.getElementById('screen').getContext = () => ({drawImage(bitmap) { draws.push(bitmap.id); }});
   const window = element();
@@ -71,8 +77,11 @@ function page(storageBlocked = false) {
   const decodes = [];
   const replacedUrls = [];
   const storage = new Map();
+  if (savedMapping) storage.set('widemelonGamepadMapping', JSON.stringify(savedMapping));
+  const gamepads = [];
   const sandbox = {document, window, WebSocket, ArrayBuffer, DataView, Uint8Array, Blob,
     URLSearchParams, performance: {now: () => clock},
+    navigator: {getGamepads: () => gamepads},
     location: {host: '127.0.0.1:24800', hash: '#pair=' + 'A'.repeat(43), pathname: '/', search: ''},
     history: {replaceState(a, b, url) { replacedUrls.push(url); }},
     sessionStorage: {
@@ -80,11 +89,17 @@ function page(storageBlocked = false) {
       setItem(key, value) { if (storageBlocked) throw Error('storage disabled'); storage.set(key, value); },
       removeItem(key) { if (storageBlocked) throw Error('storage disabled'); storage.delete(key); }
     },
+    localStorage: {
+      getItem(key) { if (storageBlocked) throw Error('storage disabled'); return storage.get(key); },
+      setItem(key, value) { if (storageBlocked) throw Error('storage disabled'); storage.set(key, value); },
+      removeItem(key) { if (storageBlocked) throw Error('storage disabled'); storage.delete(key); }
+    },
     setTimeout: (fn, delay) => timer(fn, delay), clearTimeout: id => timers.delete(id),
     setInterval: (fn, delay) => timer(fn, delay, true),
+    requestAnimationFrame: fn => timer(fn, 16),
     createImageBitmap: () => new Promise(resolve => decodes.push(resolve))};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/frontend/qt_sdl/phone/app.js'), 'utf8'), sandbox);
-  return {document, window, sockets, tick, decodes, draws, storage, replacedUrls, now: () => clock};
+  return {document, window, sockets, tick, decodes, draws, storage, gamepads, replacedUrls, now: () => clock};
 }
 
 function frame(sequence) {
@@ -153,6 +168,106 @@ async function decode(p, id) {
   assert.equal(controller.sent.at(-1).buttons, 1);
   a.fire('pointerup', {pointerId: 12});
   assert.equal(controller.sent.at(-1).buttons, 0);
+
+  const pad = {index: 0, connected: true, mapping: 'standard',
+    buttons: Array.from({length: 16}, () => ({pressed: false})), axes: [0, 0]};
+  multi.gamepads[0] = pad;
+  pad.buttons[0].pressed = true;
+  pad.axes[0] = -1;
+  multi.tick(16);
+  assert.equal(controller.sent.at(-1).buttons, 1 | (1 << 5), 'gamepad face and stick input reach the bridge');
+  assert(multi.document.getElementById('controller').classList.contains('gamepad-mode'));
+  const toggle = multi.document.getElementById('virtual-controls');
+  assert.equal(toggle.hidden, false);
+  toggle.fire('click');
+  assert(!multi.document.getElementById('controller').classList.contains('gamepad-mode'));
+  assert.equal(controller.sent.at(-1).buttons, 1 | (1 << 5), 'showing controls preserves hardware input');
+  x.fire('pointerdown', {pointerId: 44});
+  assert.equal(controller.sent.at(-1).buttons, 1 | (1 << 5) | (1 << 10));
+  toggle.fire('click');
+  assert.equal(controller.sent.at(-1).buttons, 1 | (1 << 5), 'hiding controls releases virtual input only');
+  multi.window.fire('blur');
+  assert.equal(controller.sent.findLast(message => message.type === 'input').buttons, 0,
+    'leaving the page releases held gamepad input');
+  multi.window.fire('focus');
+  multi.tick(16);
+  assert.equal(controller.sent.at(-1).buttons, 1 | (1 << 5), 'returning to the page restores gamepad input');
+  pad.buttons[6].pressed = true;
+  pad.buttons[4].pressed = true;
+  multi.tick(16);
+  assert.equal(controller.sent.at(-1).buttons, 1 | (1 << 5) | (1 << 9),
+    'DS L uses the trigger rather than the browser-reserved shoulder by default');
+  pad.buttons[10].pressed = true;
+  multi.tick(16);
+  assert(!multi.document.getElementById('controller').classList.contains('gamepad-mode'),
+    'left-stick click controls the phone page');
+  pad.buttons[10].pressed = false;
+  multi.tick(16);
+  pad.buttons[11].pressed = true;
+  multi.tick(16);
+  assert.equal(multi.document.getElementById('gamepad-settings').hidden, false);
+  assert.equal(controller.sent.at(-1).buttons, 0, 'editing releases gamepad input');
+  pad.buttons[11].pressed = false;
+  multi.tick(16);
+  pad.buttons[11].pressed = true;
+  multi.tick(16);
+  assert.equal(multi.document.getElementById('gamepad-settings').hidden, true);
+  assert.equal(controller.sent.at(-1).buttons, 1 | (1 << 5) | (1 << 9));
+  pad.connected = false;
+  multi.tick(16);
+  assert.equal(controller.sent.at(-1).buttons, 0, 'unplug releases hardware input');
+  assert.equal(toggle.hidden, true);
+
+  const custom = page(false, {
+    buttons: ['b2', 'b1', 'b8', 'b9', 'b15', 'b14', 'b12', 'b13', 'b7', 'b6', 'b0', 'b3'],
+    customizedButtons: [true, false, false, false, false, false, false, false, false, false, true, false],
+    hotkeyRows: [{action: 4, source: 'b6'}], stickAsDpad: true
+  });
+  const customSocket = custom.sockets[0];
+  customSocket.open();
+  customSocket.message({v: 2, type: 'hello'});
+  const customPad = {index: 0, connected: true, mapping: 'standard',
+    buttons: Array.from({length: 16}, () => ({pressed: false})), axes: [0, 0]};
+  custom.gamepads[0] = customPad;
+  customPad.buttons[2].pressed = true;
+  customPad.buttons[6].pressed = true;
+  custom.tick(16);
+  assert.equal(customSocket.sent.at(-1).buttons, 1 | (1 << 9),
+    'saved custom DS mapping loads in a later page session');
+  assert.equal(customSocket.sent.at(-1).hotkeys, 1 << 4,
+    'saved hotkey mapping loads in a later page session');
+
+  custom.document.getElementById('gamepad-map').fire('click');
+  const mapA = custom.document.getElementById('map-0');
+  mapA.fire('click');
+  custom.tick(16);
+  assert.equal(JSON.parse(custom.storage.get('widemelonGamepadMapping')).buttons[0], 'b2',
+    'a button already held when capture starts does not replace the binding');
+  customPad.buttons[2].pressed = false;
+  customPad.buttons[6].pressed = false;
+  custom.tick(16);
+  customPad.axes[2] = -1;
+  custom.tick(16);
+  assert.equal(JSON.parse(custom.storage.get('widemelonGamepadMapping')).buttons[0], 'a2-',
+    'capture accepts the next input after all controller inputs return to neutral');
+  assert(!mapA.classList.contains('waiting'));
+
+  customPad.axes[2] = 0;
+  mapA.fire('click');
+  custom.tick(16);
+  customPad.connected = false;
+  custom.tick(16);
+  assert(!mapA.classList.contains('waiting'), 'disconnect cancels pending mapping capture');
+  customPad.connected = true;
+  custom.tick(16);
+  customPad.buttons[11].pressed = true;
+  custom.tick(16);
+  customPad.buttons[11].pressed = false;
+  custom.tick(16);
+  customPad.buttons[3].pressed = true;
+  custom.tick(16);
+  assert.equal(JSON.parse(custom.storage.get('widemelonGamepadMapping')).buttons[0], 'a2-',
+    'reopening settings after reconnect does not resume an abandoned capture');
 
   for (const rate of [60, 120, 240]) {
     const motion = page();
