@@ -117,10 +117,20 @@ endif()
 option(WIDEMELON_ENABLE_DEB "Generate a Debian binary package with CPack" OFF)
 set(WIDEMELON_PACKAGE_VERSION "${WIDEMELON_VERSION}" CACHE STRING
     "Version used for distribution packages")
+set(WIDEMELON_DEBIAN_ARCHITECTURE "" CACHE STRING
+    "Debian package architecture (for example amd64 or arm64)")
 
 if (WIDEMELON_ENABLE_DEB)
     if (NOT UNIX OR APPLE)
         message(FATAL_ERROR "Debian packages can only be generated on Linux")
+    endif()
+
+    if (NOT WIDEMELON_DEBIAN_ARCHITECTURE)
+        if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+            set(WIDEMELON_DEBIAN_ARCHITECTURE "amd64")
+        elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+            set(WIDEMELON_DEBIAN_ARCHITECTURE "arm64")
+        endif()
     endif()
 
     set(CPACK_GENERATOR "DEB")
@@ -137,7 +147,12 @@ if (WIDEMELON_ENABLE_DEB)
     set(CPACK_DEBIAN_PACKAGE_RELEASE "1")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
+    if (NOT WIDEMELON_DEBIAN_ARCHITECTURE MATCHES "^[a-z0-9][a-z0-9-]*$")
+        message(FATAL_ERROR
+            "Set WIDEMELON_DEBIAN_ARCHITECTURE to a valid Debian architecture")
+    endif()
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${WIDEMELON_DEBIAN_ARCHITECTURE}")
     set(CPACK_DEBIAN_FILE_NAME
-        "widemelon_${WIDEMELON_PACKAGE_VERSION}-1_amd64.deb")
+        "widemelon_${WIDEMELON_PACKAGE_VERSION}-1_${WIDEMELON_DEBIAN_ARCHITECTURE}.deb")
     include(CPack)
 endif()

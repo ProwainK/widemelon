@@ -13,9 +13,21 @@ permissions:
 
 jobs:
   packages:
-    name: AppImage and Debian
-    runs-on: ubuntu-22.04
+    name: AppImage and Debian (${{ matrix.package_arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package_arch: x86_64
+            runner: ubuntu-22.04
+            deb_arch: amd64
+            appimage_arch: x86_64
+          - package_arch: arm64
+            runner: ubuntu-22.04-arm
+            deb_arch: arm64
+            appimage_arch: aarch64
 
     steps:
       - name: Check out source
@@ -58,7 +70,8 @@ jobs:
           WIDEMELON_USE_QT6: "0"
         run: ./scripts/build.sh
 
-      - name: Generate application source input
+      - name: Generate architecture-independent application source input
+        if: matrix.package_arch == 'x86_64'
         run: ./scripts/package-source.sh "$VERSION"
 
       - name: Build Debian package
@@ -68,18 +81,21 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
             -DENABLE_LTO_RELEASE=OFF -DUSE_QT6=OFF \
             -DWIDEMELON_ENABLE_DEB=ON \
+            -DWIDEMELON_DEBIAN_ARCHITECTURE="${{ matrix.deb_arch }}" \
             -DWIDEMELON_PACKAGE_VERSION="$deb_version"
           cmake --build build/deb --parallel
           cpack --config build/deb/CPackConfig.cmake -B dist -G DEB
           if [[ "$deb_version" != "$VERSION" ]]; then
-            mv "dist/widemelon_${deb_version}-1_amd64.deb" \
-              "dist/widemelon_${VERSION}-1_amd64.deb"
+            mv "dist/widemelon_${deb_version}-1_${{ matrix.deb_arch }}.deb" \
+              "dist/widemelon_${VERSION}-1_${{ matrix.deb_arch }}.deb"
           fi
-          dpkg-deb --info "dist/widemelon_${VERSION}-1_amd64.deb"
+          package="dist/widemelon_${VERSION}-1_${{ matrix.deb_arch }}.deb"
+          [[ "$(dpkg-deb --field "$package" Architecture)" == "${{ matrix.deb_arch }}" ]]
+          dpkg-deb --info "$package"
 
       - name: Test Debian package
         run: |
-          sudo apt-get install --yes "./dist/widemelon_${VERSION}-1_amd64.deb"
+          sudo apt-get install --yes "./dist/widemelon_${VERSION}-1_${{ matrix.deb_arch }}.deb"
           xvfb-run -a widemelon --help
 
       - name: Stage application
@@ -91,46 +107,52 @@ jobs:
       - name: Build AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-          ARCH: x86_64
+          ARCH: ${{ matrix.appimage_arch }}
           EXTRA_PLATFORM_PLUGINS: "libqwayland-egl.so;libqwayland-generic.so"
           EXTRA_QT_MODULES: "waylandcompositor"
           QMAKE: /usr/lib/qt5/bin/qmake
         run: |
           mkdir -p build/appimage-tools
           wget --quiet -P build/appimage-tools \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.appimage_arch }}.AppImage
           wget --quiet -P build/appimage-tools \
-            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${{ matrix.appimage_arch }}.AppImage
           chmod +x build/appimage-tools/*.AppImage
-          export LDAI_OUTPUT="$GITHUB_WORKSPACE/dist/WideMelon-${VERSION}-x86_64.AppImage"
-          build/appimage-tools/linuxdeploy-x86_64.AppImage \
+          export LDAI_OUTPUT="$GITHUB_WORKSPACE/dist/WideMelon-${VERSION}-${{ matrix.appimage_arch }}.AppImage"
+          build/appimage-tools/linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
             --appdir build/AppDir --plugin qt --output appimage
           xvfb-run -a "$LDAI_OUTPUT" --appimage-extract-and-run --help
 
       - name: Archive bundled-library sources
-        run: ./scripts/package-third-party-source.sh "$VERSION" build/AppDir
+        run: ./scripts/package-third-party-source.sh "$VERSION" build/AppDir "linux-${{ matrix.package_arch }}"
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v7
         with:
-          name: WideMelon-${{ env.VERSION }}-linux-x86_64-appimage
-          path: dist/WideMelon-${{ env.VERSION }}-x86_64.AppImage
+          name: WideMelon-${{ env.VERSION }}-linux-${{ matrix.package_arch }}-appimage
+          path: dist/WideMelon-${{ env.VERSION }}-${{ matrix.appimage_arch }}.AppImage
           if-no-files-found: error
           compression-level: 0
 
       - name: Upload Debian package
         uses: actions/upload-artifact@v7
         with:
-          name: WideMelon-${{ env.VERSION }}-linux-x86_64-debian
-          path: dist/widemelon_${{ env.VERSION }}-1_amd64.deb
+          name: WideMelon-${{ env.VERSION }}-linux-${{ matrix.package_arch }}-debian
+          path: dist/widemelon_${{ env.VERSION }}-1_${{ matrix.deb_arch }}.deb
           if-no-files-found: error
           compression-level: 0
 
-      - name: Upload Linux source inputs
+      - name: Upload application source input
+        if: matrix.package_arch == 'x86_64'
         uses: actions/upload-artifact@v7
         with:
-          name: WideMelon-${{ env.VERSION }}-linux-x86_64-source
-          path: |
-            dist/widemelon-${{ env.VERSION }}-source.tar.xz
-            dist/widemelon-${{ env.VERSION }}-third-party-source.tar.xz
+          name: WideMelon-${{ env.VERSION }}-linux-application-source
+          path: dist/widemelon-${{ env.VERSION }}-source.tar.xz
+          if-no-files-found: error
+
+      - name: Upload bundled-library source input
+        uses: actions/upload-artifact@v7
+        with:
+          name: WideMelon-${{ env.VERSION }}-linux-${{ matrix.package_arch }}-source
+          path: dist/widemelon-${{ env.VERSION }}-linux-${{ matrix.package_arch }}-third-party-source.tar.xz
           if-no-files-found: error
