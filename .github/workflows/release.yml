@@ -292,7 +292,7 @@ jobs:
       - name: Download Linux packages and source inputs
         uses: actions/download-artifact@v8
         with:
-          pattern: WideMelon-${{ needs.version.outputs.version }}-linux-x86_64-*
+          pattern: WideMelon-${{ needs.version.outputs.version }}-linux-*
           path: dist
           merge-multiple: true
       - name: Download native release applications
@@ -319,7 +319,9 @@ jobs:
             "WideMelon-$VERSION-macOS-x86_64.dmg"
             "WideMelon-$VERSION-macOS-arm64.dmg"
             "WideMelon-$VERSION-x86_64.AppImage"
+            "WideMelon-$VERSION-aarch64.AppImage"
             "widemelon_${VERSION}-1_amd64.deb"
+            "widemelon_${VERSION}-1_arm64.deb"
             "WideMelon-$VERSION-Complete-Source.tar.zst"
           )
           for asset in "${assets[@]}"; do
