@@ -97,9 +97,6 @@ void applyProfile(int viewWidth, int scale, int windowWidth, int windowHeight,
     global.SetInt("3D.Renderer", renderer3D_OpenGL);
     global.SetInt("3D.GL.ScaleFactor", scale);
     global.SetBool("Screen.Filter", false);
-    global.SetBool("Emu.DirectBoot", true);
-    global.SetInt("Emu.ConsoleType", 0);
-    global.SetBool("Emu.ExternalBIOSEnable", false);
     global.SetInt("WideMelon.ViewWidth", viewWidth);
     global.SetInt("WideMelon.Scale", scale);
     global.SetInt("WideMelon.WindowWidth", windowWidth);
