@@ -54,7 +54,7 @@ Development builds from the newest commit are available from the
 Download and install the current package:
 
 ```sh
-VERSION=1.0.2
+VERSION=1.0.3
 case "$(dpkg --print-architecture)" in
   amd64) ARCH=amd64 ;;
   arm64) ARCH=arm64 ;;
@@ -72,7 +72,7 @@ WideMelon will appear in your application menu and can also be started with
 The AppImage works on most x86_64 and ARM64 Linux distributions:
 
 ```sh
-VERSION=1.0.2
+VERSION=1.0.3
 case "$(uname -m)" in
   x86_64) ARCH=x86_64 ;;
   aarch64|arm64) ARCH=aarch64 ;;

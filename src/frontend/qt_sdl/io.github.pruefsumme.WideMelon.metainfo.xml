@@ -21,6 +21,15 @@
     <binary>widemelon</binary>
   </provides>
   <releases>
+    <release version="1.0.3" date="2026-09-15">
+      <description>
+        <ul>
+          <li>Adds phone gamepad mapping, hotkeys, and QR pairing controls.</li>
+          <li>Preserves saved startup settings and emulator boot configuration.</li>
+          <li>Adds Linux ARM64 CI coverage and release packages.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.2" date="2026-09-11">
       <description>
         <ul>

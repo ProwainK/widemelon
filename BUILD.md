@@ -274,7 +274,7 @@ WIDEMELON_PHONE_LOG_LEVEL=debug WIDEMELON_PHONE_LOG_FILE=1 ./widemelon
 Windows and macOS downloads plus Linux x86_64 and ARM64 AppImages and Debian
 packages, runs tests, and packages exact dependency sources. A normal dispatch
 uploads development artifacts only. A dispatch from `main` with
-`publish_release` enabled builds all platforms once, creates `v1.0.2` on the
+`publish_release` enabled builds all platforms once, creates `v1.0.3` on the
 exact tested commit only after every package succeeds, publishes the GitHub
 Release, and then updates AUR. The tag must not already exist, and
 `WIDEMELON_VERSION` must match the intended release. `RELEASE_NOTES.md` is
@@ -294,13 +294,13 @@ and reruns skip repositories whose generated files are already current.
 Run `./scripts/build.sh` before committing release changes. Once committed:
 
 ```sh
-./scripts/package-source.sh 1.0.2
+./scripts/package-source.sh 1.0.3
 ```
 
 The native packaging command, after building and testing on that host, is:
 
 ```sh
-python scripts/package-native.py 1.0.2 macos-arm64 arm64-osx-13-release
+python scripts/package-native.py 1.0.3 macos-arm64 arm64-osx-13-release
 ```
 
 Use the matching platform/triplet for Windows or Intel macOS. Windows packaging

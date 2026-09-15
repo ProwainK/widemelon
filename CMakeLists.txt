@@ -23,7 +23,7 @@ project(melonDS
     LANGUAGES C CXX)
 
 # WideMelon releases have their own version; retain the upstream engine version.
-set(WIDEMELON_VERSION "1.0.2")
+set(WIDEMELON_VERSION "1.0.3")
 
 include(CheckSymbolExists)
 include(CheckLibraryExists)
