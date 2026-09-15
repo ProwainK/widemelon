@@ -42,7 +42,7 @@ Download the latest build from the
 | --- | --- |
 | Windows | Download the x64 `.exe` and open it. |
 | macOS | Download the Apple Silicon or Intel `.dmg`, then drag WideMelon to Applications. |
-| Linux | Install the Debian package, use the AppImage, or choose an AUR package below. |
+| Linux | Install the x86_64 or ARM64 Debian package or AppImage, or choose an AUR package below. |
 
 Development builds from the newest commit are available from the
 [Release workflow](https://github.com/pruefsumme/widemelon/actions/workflows/release.yml).
@@ -55,8 +55,13 @@ Download and install the current package:
 
 ```sh
 VERSION=1.0.2
-wget "https://github.com/pruefsumme/widemelon/releases/download/v${VERSION}/widemelon_${VERSION}-1_amd64.deb"
-sudo apt install "./widemelon_${VERSION}-1_amd64.deb"
+case "$(dpkg --print-architecture)" in
+  amd64) ARCH=amd64 ;;
+  arm64) ARCH=arm64 ;;
+  *) echo "Unsupported architecture: $(dpkg --print-architecture)"; exit 1 ;;
+esac
+wget "https://github.com/pruefsumme/widemelon/releases/download/v${VERSION}/widemelon_${VERSION}-1_${ARCH}.deb"
+sudo apt install "./widemelon_${VERSION}-1_${ARCH}.deb"
 ```
 
 WideMelon will appear in your application menu and can also be started with
@@ -64,19 +69,24 @@ WideMelon will appear in your application menu and can also be started with
 
 #### AppImage
 
-The AppImage works on most x86_64 Linux distributions:
+The AppImage works on most x86_64 and ARM64 Linux distributions:
 
 ```sh
 VERSION=1.0.2
-wget "https://github.com/pruefsumme/widemelon/releases/download/v${VERSION}/WideMelon-${VERSION}-x86_64.AppImage"
-chmod +x "WideMelon-${VERSION}-x86_64.AppImage"
-./"WideMelon-${VERSION}-x86_64.AppImage"
+case "$(uname -m)" in
+  x86_64) ARCH=x86_64 ;;
+  aarch64|arm64) ARCH=aarch64 ;;
+  *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
+esac
+wget "https://github.com/pruefsumme/widemelon/releases/download/v${VERSION}/WideMelon-${VERSION}-${ARCH}.AppImage"
+chmod +x "WideMelon-${VERSION}-${ARCH}.AppImage"
+./"WideMelon-${VERSION}-${ARCH}.AppImage"
 ```
 
 #### Arch Linux and AUR
 
-Choose one package. All three install the same `widemelon` command and desktop
-entry, so they cannot be installed together.
+On Arch Linux x86_64, choose one package. All three install the same `widemelon`
+command and desktop entry, so they cannot be installed together.
 
 Stable release, built locally:
 
@@ -98,10 +108,11 @@ yay -S widemelon-git
 
 ## Quick start
 
-1. Open WideMelon and choose your viewport, window resolution, and render scale.
+1. Open WideMelon. Use the display button on the home screen when you want to
+   change the viewport, window resolution, or render scale for the next launch.
 2. Open a legally obtained `.nds` ROM with the folder button or **File > Open ROM**.
 3. The next time you start WideMelon, double-click the game in **Recent ROMs**.
-4. For phone play, select the phone button and follow the pairing steps below.
+4. For phone play, start the phone server on the home screen and scan its QR code.
 
 You can also drag a ROM directly onto the WideMelon window. WideMelon does not
 include games, ROMs, commercial BIOS or firmware files, or saves.
@@ -111,11 +122,34 @@ include games, ROMs, commercial BIOS or firmware files, or saves.
 WideMelon can move the physical bottom screen and DS controls to a phone while
 the wide top screen stays on your computer.
 
-1. Select the phone button on the home screen, or open
-   **Config > Phone screen & controller…**.
-2. Choose the private Wi-Fi or Ethernet address shared with your phone.
-3. Start the connection and scan the QR code with your phone.
+1. Select **Start phone server** on the home screen and scan the QR code that appears.
+2. If you need to choose another private Wi-Fi or Ethernet address, select the
+   phone button or open **Config > Phone screen & controller…**.
+3. Start the connection from that dialog, then scan the QR code on the home screen
+   or in the dialog.
 4. Use **Edit controller layout…** to move, resize, or customize the controls.
+
+If a gamepad is connected to the phone, its standard face buttons, shoulders,
+Start/Select, D-pad, and left stick control the DS. The on-screen DS buttons
+hide automatically when the browser recognizes the gamepad. Tap **Show controls**
+to bring them back, or **Hide controls** to clear the screen again. The bottom
+screen remains touchable in either mode. If the controller does not appear,
+press one of its buttons while the phone page is open; some browsers reveal
+gamepads only after an input gesture.
+
+Tap the small wrench on the phone page, select a DS control in the controller
+diagram, then press the physical controller input to bind it. Extra buttons can
+run melonDS actions such as fast forward, pause, fullscreen or screen swap. Add
+as many hotkey rows as needed. L/R use the controller triggers by default, since
+some mobile browsers reserve the shoulder buttons for page navigation. Mapping
+is saved locally in the phone browser across WideMelon sessions; **Restore**
+resets it. Newly customized controls turn green while unchanged defaults remain
+grey.
+
+Some Android Chrome versions incorrectly use LB/RB for switching browser tabs.
+The page cannot cancel that browser-level action. Until the Chromium regression
+is fixed, use LT/RT, remap the controller in Android's Game Controller settings,
+or use a browser where the shoulder buttons are not reserved.
 
 The bridge is off by default and requires session-only pairing. Keep the phone
 and computer on the same trusted, non-guest network. If the phone disconnects,

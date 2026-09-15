@@ -9,7 +9,7 @@ or run the automated tests. C++17, CMake, Ninja, and Git are required.
 
 ## Linux
 
-On Ubuntu 24.04:
+On Ubuntu 24.04, on either x86_64 or ARM64:
 
 ```sh
 sudo apt install build-essential cmake ninja-build git pkg-config nodejs \
@@ -24,7 +24,31 @@ sudo apt install build-essential cmake ninja-build git pkg-config nodejs \
 The script builds pinned FAAD2 2.11.2 and ENet 1.3.18 from `.deps/`, then builds
 the emulator and runs its tests. It accepts `WIDEMELON_BUILD_JOBS` (default 6).
 Use `WIDEMELON_USE_QT6=0` with Qt 5.15 development libraries to build with Qt 5.
-Linux release AppImages use Qt 5 on Ubuntu 22.04 for broader compatibility.
+Linux release AppImages use Qt 5 on native Ubuntu 22.04 x86_64 and ARM64 runners
+for broader compatibility.
+
+A community-tested Fedora 44 ARM64 build used Clang and the matching system
+development packages:
+
+```sh
+sudo dnf install cmake ninja-build git pkgconf clang llvm lld nodejs \
+  libcurl-devel libpcap-devel SDL2-devel libarchive-devel libzstd-devel \
+  faad2-devel enet-devel extra-cmake-modules mesa-libEGL-devel \
+  mesa-libGL-devel wayland-devel qt6-qtbase-devel \
+  qt6-qtbase-private-devel qt6-qtmultimedia-devel qt6-qtsvg-devel \
+  qt6-qtwebsockets-devel
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=/usr/bin/clang \
+  -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+  -DCMAKE_AR=/usr/bin/llvm-ar \
+  -DCMAKE_RANLIB=/usr/bin/llvm-ranlib \
+  -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld"
+cmake --build build
+cmake -S tests -B build/tests -G Ninja -DUSE_QT6=ON
+cmake --build build/tests
+ctest --test-dir build/tests --output-on-failure
+```
 
 ## Windows and macOS release builds
 
@@ -108,6 +132,37 @@ The controller layout editor supports moving and resizing controls, undo and
 redo, custom emulator-action buttons, D-pad or analog-stick input, and optional
 status, FPS, and frame text.
 
+The phone page polls the browser Gamepad API for a controller with a standard
+mapping. It merges the controller's buttons and left-stick directions with the
+existing phone input snapshot. While such a controller is present, virtual DS
+buttons are hidden by default and can be shown with the page's **Show controls**
+button. Stylus touch remains available on the bottom screen. Disconnecting the
+controller or hiding the page releases held hardware buttons and restores the
+virtual controls.
+
+The wrench panel provides an interactive controller diagram. Selecting a DS
+control arms capture; after all inputs return to neutral, the next standard
+button or stick direction becomes its binding. Hotkey rows use the same capture
+flow and can target any phone-supported melonDS action. The normal panel shows
+each hotkey as one compact key/action button; tapping it opens its focused editor.
+The default maps DS L/R
+to trigger buttons 6/7, avoiding shoulder buttons 4/5 that some browsers use for
+navigation. The left stick can also drive D-pad directions. A validated mapping
+is kept in browser local storage; blocked storage falls back to the defaults.
+Opening the panel temporarily releases gamepad input to avoid changing the game
+while editing.
+
+The saved object also records which DS bindings were explicitly customized.
+Those controls and configured hotkeys render green after reload; untouched
+defaults remain neutral grey. The configured phone base port is persistent, so
+the browser origin and its mapping storage remain stable across normal restarts.
+
+Some Android Chrome releases reserve standard buttons 4/5 (LB/RB) for switching
+tabs at the browser level. These actions are not cancellable through the Gamepad
+API. The mapper still supports the inputs for unaffected browsers and future
+Chrome fixes; trigger buttons 6/7 remain the default DS L/R binding.
+
+
 The bridge is intended for a trusted private LAN. Pairing prevents ordinary
 devices from connecting, but the connection is not encrypted. Do not expose the
 port to the internet or use it on public, guest, school, or workplace networks.
@@ -181,6 +236,11 @@ bridge while streaming a generated test pattern; no ROM is needed:
 node tests/phone_browser_smoke.js build/tests/phone_bridge_test /usr/bin/chromium
 ```
 
+Add `--gamepad` to exercise browser gamepad input, automatic virtual-control
+hiding, the toggle, and controller disconnect with a simulated standard gamepad.
+This checks the production WebSocket path but cannot prove that a particular
+phone, browser, or Backbone model exposes the controller to the Gamepad API.
+
 Add `--benchmark --dialog` to measure sustained streaming during idle,
 continuous touch, and simultaneous button holds with the settings dialog open.
 The test reports per-stage FPS and decode/delivery timing and fails below 28.5
@@ -211,14 +271,17 @@ WIDEMELON_PHONE_LOG_LEVEL=debug WIDEMELON_PHONE_LOG_FILE=1 ./widemelon
 ## Release packaging
 
 `.github/workflows/release.yml` runs by manual dispatch. It builds direct
-Windows, macOS DMG, Linux AppImage, and Debian downloads, runs tests, and
-packages exact dependency sources. A normal dispatch uploads development
-artifacts only. A dispatch from `main` with `publish_release` enabled builds all
-platforms once, creates `v1.0.2` on the exact tested commit only after every
-package succeeds, publishes the GitHub Release, and then updates AUR. The tag
-must not already exist, and `WIDEMELON_VERSION` must match the intended release.
-Release notes come from `RELEASE_NOTES.md`; `SHA256SUMS` covers every published
-asset. Ordinary branch pushes use the faster CI workflow.
+Windows and macOS downloads plus Linux x86_64 and ARM64 AppImages and Debian
+packages, runs tests, and packages exact dependency sources. A normal dispatch
+uploads development artifacts only. A dispatch from `main` with
+`publish_release` enabled builds all platforms once, creates `v1.0.2` on the
+exact tested commit only after every package succeeds, publishes the GitHub
+Release, and then updates AUR. The tag must not already exist, and
+`WIDEMELON_VERSION` must match the intended release. `RELEASE_NOTES.md` is
+published verbatim and contains only the version heading and changelog;
+download instructions remain in `README.md`. `SHA256SUMS` covers every
+published asset. Ordinary branch pushes run x86_64 and ARM64 tests with both
+supported Qt versions.
 
 After the GitHub release is published, the workflow renders and clean-builds
 the `widemelon`, `widemelon-git`, and `widemelon-bin` recipes, then updates their
