@@ -5,7 +5,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const {spawn, execFileSync} = require('node:child_process');
-const {mkdtemp, rm} = require('node:fs/promises');
+const {mkdtemp, rm, writeFile} = require('node:fs/promises');
 const {tmpdir} = require('node:os');
 const path = require('node:path');
 const {createInterface} = require('node:readline');
@@ -127,6 +127,13 @@ async function waitFor(check) {
         document.addEventListener('pointerdown', e => { window.benchPointer = e.pointerId; }, true);
       `});
     }
+    if (process.argv.includes('--gamepad')) {
+      await tab('Page.addScriptToEvaluateOnNewDocument', {source: `
+        window.testPad = {index: 0, connected: false, mapping: 'standard',
+          buttons: Array.from({length: 16}, () => ({pressed: false})), axes: [0, 0]};
+        Object.defineProperty(navigator, 'getGamepads', {value: () => [testPad]});
+      `});
+    }
     await tab('Emulation.setDeviceMetricsOverride', {width: 932, height: 430, deviceScaleFactor: 1, mobile: true});
     await tab('Emulation.setTouchEmulationEnabled', {enabled: true, maxTouchPoints: 5});
     await tab('Page.navigate', {url});
@@ -216,6 +223,63 @@ async function waitFor(check) {
     await touch('touchEnd', []);
     await waitFor(() => state.keys === 0xFFF);
     assert(state.framesAcked > 2, 'video acknowledgement flow continues during touch input');
+    if (process.argv.includes('--gamepad')) {
+      const evaluate = async expression => (await tab('Runtime.evaluate', {expression, returnByValue: true})).result.value;
+      await evaluate('testPad.connected = true; testPad.buttons[0].pressed = true');
+      await waitFor(() => state.keys === 0xFFE);
+      await waitFor(async () => evaluate("document.getElementById('controller').classList.contains('gamepad-mode')"));
+      assert.equal(await evaluate("document.getElementById('virtual-controls').hidden"), false);
+      await evaluate("document.getElementById('virtual-controls').click()");
+      assert.equal(await evaluate("document.getElementById('controller').classList.contains('gamepad-mode')"), false);
+      // Showing the buttons must not discard a held hardware button.
+      assert.equal(state.keys, 0xFFE);
+      await evaluate('testPad.buttons[0].pressed = false');
+      await waitFor(() => state.keys === 0xFFF);
+      await evaluate("document.getElementById('gamepad-map').click()");
+      assert.equal(await evaluate("document.getElementById('gamepad-settings').hidden"), false);
+      assert.equal(await evaluate("document.getElementById('gamepad-settings').scrollHeight <= document.getElementById('gamepad-settings').clientHeight"), true,
+        'controller settings must fit the phone viewport without outer overflow');
+      assert.equal(await evaluate("document.querySelector('#controller-diagram [data-ds-bit=\"0\"]').classList.contains('mapped')"), false,
+        'default bindings stay neutral until the user remaps them');
+      await evaluate("document.querySelector('#controller-diagram [data-ds-bit=\"0\"]').dispatchEvent(new MouseEvent('click', {bubbles:true}))");
+      await delay(50);
+      await evaluate('testPad.buttons[2].pressed = true');
+      await waitFor(async () => evaluate("JSON.parse(localStorage.getItem('widemelonGamepadMapping')).buttons[0] === 'b2'"));
+      assert.equal(await evaluate("document.querySelector('#controller-diagram [data-ds-bit=\"0\"]').classList.contains('mapped')"), true,
+        'newly mapped DS buttons are marked green');
+      await evaluate('testPad.buttons[2].pressed = false');
+      await evaluate("document.querySelector('#gamepad-hotkeys .hotkey-tile').click(); document.getElementById('hotkey-editor-bind').click()");
+      await delay(50);
+      await evaluate('testPad.buttons[4].pressed = true');
+      await waitFor(async () => evaluate("JSON.parse(localStorage.getItem('widemelonGamepadMapping')).hotkeyRows[0].source === 'b4'"));
+      await evaluate("document.getElementById('hotkey-editor-done').click()");
+      assert.equal(await evaluate("document.querySelector('#gamepad-hotkeys .hotkey-tile').classList.contains('mapped')"), true,
+        'mapped hotkeys are marked green');
+      await evaluate("document.getElementById('add-gamepad-hotkey').click()");
+      assert.equal(await evaluate("document.querySelectorAll('#gamepad-hotkeys .hotkey-tile').length"), 2);
+      assert.equal(await evaluate("document.getElementById('hotkey-editor').hidden"), false,
+        'adding a hotkey opens its compact editor');
+      await evaluate("document.getElementById('hotkey-editor-remove').click()");
+      assert.equal(await evaluate("document.querySelectorAll('#gamepad-hotkeys .hotkey-tile').length"), 1);
+      const screenshotArg = process.argv.find(value => value.startsWith('--screenshot='));
+      if (screenshotArg) {
+        const shot = await tab('Page.captureScreenshot', {format: 'png'});
+        await writeFile(screenshotArg.slice('--screenshot='.length), Buffer.from(shot.data, 'base64'));
+      }
+      await evaluate('testPad.buttons[4].pressed = false');
+      await evaluate("document.getElementById('gamepad-close').click()");
+      await evaluate("document.getElementById('virtual-controls').click()");
+      await waitFor(async () => evaluate("document.getElementById('controller').classList.contains('gamepad-mode')"));
+      await touch('touchStart', [point(4, screen)]);
+      await waitFor(() => state.touch >= 0x80000000);
+      assert.equal(state.keys, 0xFFF, 'the screen remains touchable in gamepad mode');
+      await touch('touchEnd', []);
+      await waitFor(() => state.touch === 0);
+      await evaluate('testPad.connected = false');
+      await waitFor(() => state.keys === 0xFFF);
+      await waitFor(async () => evaluate("!document.getElementById('controller').classList.contains('gamepad-mode')"));
+      assert.equal(await evaluate("document.getElementById('virtual-controls').hidden"), true);
+    }
     console.log('Real Chromium multi-touch and continuous stylus input passed through the production WebSocket bridge');
   } finally {
     cdp?.close();

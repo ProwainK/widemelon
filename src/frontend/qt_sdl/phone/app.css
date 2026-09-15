@@ -29,7 +29,7 @@
   padding: 0.75rem;
   border: 2px solid #61728d;
   border-radius: 0.6rem;
-  background: #171f2c;
+  background: #2b2b2b;
   color: white;
   font: 700 1.4rem ui-monospace, monospace;
   letter-spacing: 0.18em;
@@ -138,6 +138,168 @@ button.active, button:active {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+#virtual-controls {
+  position: fixed;
+  z-index: 3;
+  top: max(6px, env(safe-area-inset-top));
+  right: max(44px, calc(env(safe-area-inset-right) + 44px));
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+#virtual-controls[hidden] { display: none; }
+
+#gamepad-map {
+  position: fixed;
+  z-index: 3;
+  top: max(6px, env(safe-area-inset-top));
+  right: max(137px, calc(env(safe-area-inset-right) + 137px));
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 7px;
+}
+#gamepad-map[hidden] { display: none; }
+#gamepad-map svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#gamepad-settings {
+  position: fixed;
+  z-index: 10;
+  inset: max(38px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+    max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #777;
+  border-radius: 5px;
+  background: #555;
+  color: #fff;
+}
+#gamepad-settings[hidden] { display: none; }
+.mapping-warning {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  max-width: calc(100% - 190px);
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid #d98a8a;
+  border-radius: 3px;
+  color: #ffe9e9;
+  background: #7b3d3d;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 2px 5px rgba(0,0,0,.3);
+  font-size: 12px;
+}
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+#controller-diagram {
+  position: absolute;
+  left: 3%;
+  top: 11%;
+  width: 78%;
+  height: 82%;
+}
+.controller-shell { fill: none; stroke: #fff; stroke-width: 3; stroke-linejoin: round; }
+.map-target { cursor: pointer; outline: none; }
+.map-target > :first-child { fill: #666; stroke: #fff; stroke-width: 2; }
+.map-target > text { fill: #fff; font: 700 14px Arial, sans-serif; text-anchor: middle; pointer-events: none; }
+.map-target:hover > :first-child, .map-target:focus > :first-child { fill: #777; }
+.map-target.mapped > :first-child { fill: #3f8054; stroke: #c8ead2; }
+.map-target.waiting > :first-child { fill: #888; stroke: #fff; stroke-width: 4; }
+.hotkey-panel {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: 150px;
+  max-height: calc(100% - 55px);
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+#gamepad-hotkeys { display: grid; gap: 7px; }
+.hotkey-tile {
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hotkey-tile.mapped { color: #eefaf1; background: #3f8054; border-color: #c8ead2; }
+#add-gamepad-hotkey {
+  width: 100%;
+  margin-top: 7px;
+  padding: 5px;
+  border: 0;
+  box-shadow: none;
+  color: #fff;
+  background: transparent;
+  opacity: .8;
+  text-align: left;
+}
+#gamepad-reset, #gamepad-close {
+  position: absolute;
+  bottom: 10px;
+  padding: 5px 9px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+#gamepad-reset { left: 14px; }
+#gamepad-close { right: 14px; }
+#hotkey-editor {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  width: min(290px, calc(100% - 32px));
+  padding: 12px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #888;
+  border-radius: 5px;
+  background: #444;
+  box-shadow: 0 8px 30px rgba(0,0,0,.65);
+}
+#hotkey-editor[hidden] { display: none; }
+#hotkey-editor h3 { margin: 0 0 9px; font-size: 14px; }
+#hotkey-editor > button { width: 100%; height: 38px; border-radius: 3px; }
+#hotkey-editor > button.waiting { border-color: #fff; background: #777; }
+#hotkey-editor label { display: grid; gap: 4px; margin-top: 9px; font-size: 11px; }
+#hotkey-editor select { width: 100%; height: 34px; padding: 0 6px; border: 1px solid #777; border-radius: 3px; color: #fff; background: #555; }
+#hotkey-editor > div { display: flex; justify-content: space-between; gap: 8px; margin-top: 11px; }
+#hotkey-editor > div button { padding: 6px 11px; border-radius: 3px; }
+
+@media (max-width: 680px) {
+  .mapping-warning { font-size: 10px; }
+  .hotkey-panel { width: 125px; }
+  #controller-diagram { left: 1%; width: 79%; }
+}
+
+main.gamepad-mode #dpad,
+main.gamepad-mode #face,
+main.gamepad-mode [data-button],
+main.gamepad-mode [data-hotkey] { display: none; }
 
 main {
   position: relative;
@@ -309,11 +471,13 @@ main {
 }
 
 @media (orientation: portrait) {
-  main, #hud, #fullscreen { display: none; }
+  main, #hud, #fullscreen, #virtual-controls, #gamepad-map, #gamepad-settings { display: none; }
   #rotate { height: 100%; display: grid; place-items: center; }
 }
 
 @media (max-height: 420px) {
   #hud { top: max(6px, env(safe-area-inset-top)); }
   #fullscreen { top: max(4px, env(safe-area-inset-top)); }
+  #virtual-controls { top: max(4px, env(safe-area-inset-top)); }
+  #gamepad-map { top: max(4px, env(safe-area-inset-top)); }
 }

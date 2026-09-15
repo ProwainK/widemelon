@@ -6,10 +6,12 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 version=${1:-}
 appdir=${2:-}
+platform=${3:-}
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]] ||
-   [[ ! -d $appdir/usr/lib ]]; then
-    printf 'Usage: %s VERSION APPDIR\n' "$0" >&2
+   [[ ! -d $appdir/usr/lib ]] ||
+   [[ ! $platform =~ ^linux-(x86_64|arm64)$ ]]; then
+    printf 'Usage: %s VERSION APPDIR linux-{x86_64,arm64}\n' "$0" >&2
     exit 2
 fi
 for command_name in apt-get dpkg-query tar; do
@@ -21,7 +23,7 @@ done
 
 temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"' EXIT
-bundle_name="widemelon-$version-third-party-source"
+bundle_name="widemelon-$version-$platform-third-party-source"
 bundle="$temporary/$bundle_name"
 mkdir -p "$bundle/packages" "$bundle/copyright"
 

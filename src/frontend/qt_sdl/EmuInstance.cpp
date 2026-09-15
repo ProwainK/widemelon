@@ -49,7 +49,6 @@
 #include "FreeBIOS.h"
 #include "main.h"
 #include "PhoneBridge.h"
-#include "PhoneScreenDialog.h"
 
 #include "NDSCart/CartSD.h"
 
@@ -146,16 +145,6 @@ EmuInstance::EmuInstance(int inst) : deleting(false),
 
     if (inst == 0) topWindow = nullptr;
     createWindow();
-
-    if (phoneBridge && WideMelon::PhoneBridgeRequestedForSession())
-    {
-        if (!phoneBridge->start())
-            QMessageBox::warning(mainWindow, "Phone bridge unavailable",
-                phoneBridge->lastError() + "\n\nWideMelon will keep showing the desktop bottom screen.");
-        else
-            WideMelon::OpenPhoneScreenSettings(phoneBridge.get(), mainWindow);
-        WideMelon::ClearPhoneBridgeSessionRequest();
-    }
 
     emuThread->start();
 

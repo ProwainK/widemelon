@@ -94,7 +94,7 @@ int main(int argc, char** argv)
         std::unique_ptr<PhoneScreenDialog> benchmarkDialog;
         if (application.arguments().contains("--benchmark-dialog"))
         {
-            benchmarkDialog = std::make_unique<PhoneScreenDialog>(&bridge, false);
+            benchmarkDialog = std::make_unique<PhoneScreenDialog>(&bridge);
             benchmarkDialog->show();
         }
         QTimer observer;
@@ -120,7 +120,7 @@ int main(int argc, char** argv)
     }
     const QString originalCode = bridge.pairingCode();
     const QString originalUrl = bridge.pairingUrl();
-    PhoneScreenDialog dialog(&bridge, false);
+    PhoneScreenDialog dialog(&bridge);
     QLabel* qrLabel = nullptr;
     for (QLabel* label : dialog.findChildren<QLabel*>())
         if (!label->pixmap(Qt::ReturnByValue).isNull()) qrLabel = label;

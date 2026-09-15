@@ -1,4 +1,4 @@
-// WideMelon's small native startup dialog.
+// WideMelon's native display settings.
 // Copyright (C) 2026 WideMelon contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "WideMelonSetup.h"
@@ -15,10 +15,10 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QMoveEvent>
+#include <QPointer>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
-#include <QTimer>
 
 #include "EmuInstance.h"
 #include "WideMelon.h"
@@ -97,9 +97,6 @@ void applyProfile(int viewWidth, int scale, int windowWidth, int windowHeight,
     global.SetInt("3D.Renderer", renderer3D_OpenGL);
     global.SetInt("3D.GL.ScaleFactor", scale);
     global.SetBool("Screen.Filter", false);
-    global.SetBool("Emu.DirectBoot", true);
-    global.SetInt("Emu.ConsoleType", 0);
-    global.SetBool("Emu.ExternalBIOSEnable", false);
     global.SetInt("WideMelon.ViewWidth", viewWidth);
     global.SetInt("WideMelon.Scale", scale);
     global.SetInt("WideMelon.WindowWidth", windowWidth);
@@ -139,8 +136,8 @@ void applyProfile(int viewWidth, int scale, int windowWidth, int windowHeight,
 class SetupDialog final : public QDialog
 {
 public:
-    explicit SetupDialog(bool startFullscreen, bool startup, QWidget* parent = nullptr)
-        : QDialog(parent), startup(startup)
+    explicit SetupDialog(QWidget* parent = nullptr)
+        : QDialog(parent)
     {
         setWindowTitle("WideMelon settings");
         setModal(true);
@@ -207,11 +204,8 @@ public:
         fullscreen = new QCheckBox("Start fullscreen");
         root->addWidget(fullscreen);
 
-        doNotShowAgain = new QCheckBox("Do not show this window again");
-        root->addWidget(doNotShowAgain);
-
         auto buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, Qt::Horizontal, this);
-        buttons->addButton(startup ? "Start melonDS" : "Save", QDialogButtonBox::AcceptRole);
+        buttons->addButton("Save", QDialogButtonBox::AcceptRole);
         root->addWidget(buttons);
 
         auto global = Config::GetGlobalTable();
@@ -232,8 +226,7 @@ public:
         windowWidth->setValue(std::clamp(savedWindowWidth > 0 ? savedWindowWidth : kDefaultWindowWidth, 640, 7680));
         windowHeight->setValue(std::clamp(savedWindowHeight > 0 ? savedWindowHeight : kDefaultWindowHeight, 480, 4320));
         integerScaling->setChecked(global.GetBool("WideMelon.IntegerScaling"));
-        fullscreen->setChecked(startFullscreen || global.GetBool("WideMelon.Fullscreen"));
-        doNotShowAgain->setChecked(global.GetBool("WideMelon.SetupDismissed"));
+        fullscreen->setChecked(global.GetBool("WideMelon.Fullscreen"));
         connect(viewport, qOverload<int>(&QComboBox::currentIndexChanged), this,
                 [this] { updateViewportControls(); });
         connect(resolution, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -257,11 +250,9 @@ public:
 
         updateViewportControls();
         updateResolutionControls();
-        if (startup)
-            QTimer::singleShot(0, this, [this] { showPhoneDialog(); });
     }
 
-    bool apply()
+    void apply()
     {
         const int viewWidth = viewport->currentData().toInt() == 0
             ? customWidth->value() : viewport->currentData().toInt();
@@ -273,14 +264,8 @@ public:
                      integerScaling->isChecked(), fullscreen->isChecked());
         auto global = Config::GetGlobalTable();
         global.SetInt("WideMelon.Resolution", resolutionIndex);
-        const bool newlyDismissed = doNotShowAgain->isChecked()
-            && !global.GetBool("WideMelon.SetupDismissed");
-        global.SetBool("WideMelon.SetupDismissed", doNotShowAgain->isChecked());
         Config::Save();
-        return newlyDismissed;
     }
-
-    bool startFullscreen() const { return fullscreen->isChecked(); }
 
 private:
     void showPhoneDialog()
@@ -288,12 +273,9 @@ private:
         if (!phoneDialog)
         {
             PhoneBridgeManager* bridge = nullptr;
-            if (!startup)
-            {
-                auto window = qobject_cast<MainWindow*>(parentWidget());
-                if (window) bridge = window->getEmuInstance()->getPhoneBridge();
-            }
-            phoneDialog = new PhoneScreenDialog(bridge, startup, this);
+            auto window = qobject_cast<MainWindow*>(parentWidget());
+            if (window) bridge = window->getEmuInstance()->getPhoneBridge();
+            phoneDialog = new PhoneScreenDialog(bridge, this);
         }
         phoneDialog->show();
         phoneDialog->positionBeside(this);
@@ -354,9 +336,7 @@ private:
     QComboBox* scale;
     QCheckBox* integerScaling;
     QCheckBox* fullscreen;
-    QCheckBox* doNotShowAgain;
-    PhoneScreenDialog* phoneDialog = nullptr;
-    bool startup;
+    QPointer<PhoneScreenDialog> phoneDialog;
 };
 
 }
@@ -374,47 +354,33 @@ void ApplyEnvironmentProfile()
     applyProfile(viewWidth, scale, windowWidth, windowHeight, integerScaling, false);
 }
 
-bool Configure(CLI::CommandLineOptions& options)
+void Configure(CLI::CommandLineOptions& options)
 {
     if (qEnvironmentVariableIsSet("WIDEMELON_VIEW_WIDTH"))
     {
         ApplyEnvironmentProfile();
-        return true;
+        return;
     }
 
     auto global = Config::GetGlobalTable();
-    if (global.GetBool("WideMelon.SetupDismissed"))
-    {
-        const int savedWidth = global.GetInt("WideMelon.ViewWidth");
-        const int savedScale = global.GetInt("WideMelon.Scale");
-        const int savedWindowWidth = global.GetInt("WideMelon.WindowWidth");
-        const int savedWindowHeight = global.GetInt("WideMelon.WindowHeight");
-        const bool savedFullscreen = global.GetBool("WideMelon.Fullscreen");
-        applyProfile(savedWidth, savedScale, savedWindowWidth, savedWindowHeight,
-                     global.GetBool("WideMelon.IntegerScaling"), savedFullscreen);
-        options.fullscreen = options.fullscreen || savedFullscreen;
-        return true;
-    }
-
-    SetupDialog dialog(options.fullscreen, true);
-    if (dialog.exec() != QDialog::Accepted)
-        return false;
-
-    const bool newlyDismissed = dialog.apply();
-    options.fullscreen = dialog.startFullscreen();
-    if (newlyDismissed)
-    {
-        QMessageBox::information(nullptr, "WideMelon settings saved",
-            "WideMelon will open directly from now on. You can change these settings "
-            "at any time from Config > WideMelon settings. Viewport and resolution "
-            "changes take effect the next time WideMelon starts.");
-    }
-    return true;
+    const int savedWidth = global.GetInt("WideMelon.ViewWidth");
+    const int savedScale = global.GetInt("WideMelon.Scale");
+    const int savedWindowWidth = global.GetInt("WideMelon.WindowWidth");
+    const int savedWindowHeight = global.GetInt("WideMelon.WindowHeight");
+    const bool savedFullscreen = global.GetBool("WideMelon.Fullscreen");
+    applyProfile(savedWidth,
+                 savedScale >= 1 && savedScale <= 8 ? savedScale : kDefaultScale,
+                 savedWindowWidth >= 640 && savedWindowWidth <= 7680
+                    ? savedWindowWidth : kDefaultWindowWidth,
+                 savedWindowHeight >= 480 && savedWindowHeight <= 4320
+                    ? savedWindowHeight : kDefaultWindowHeight,
+                 global.GetBool("WideMelon.IntegerScaling"), savedFullscreen);
+    options.fullscreen = options.fullscreen || savedFullscreen;
 }
 
 void OpenSettings(QWidget* parent)
 {
-    SetupDialog dialog(false, false, parent);
+    SetupDialog dialog(parent);
     if (dialog.exec() != QDialog::Accepted)
         return;
 

@@ -840,6 +840,9 @@ void MainWindow::createScreenPanel()
     {
         homePanel = nullptr;
         homeRecentList = nullptr;
+        homePhoneServerButton = nullptr;
+        homePhoneQr = nullptr;
+        homePhoneHint = nullptr;
         delete oldpanel;
     }
 
@@ -915,6 +918,10 @@ void MainWindow::createHomePanel()
             color: rgba(255, 255, 255, 210);
             font-size: 15px;
             font-weight: 600;
+        }
+        QLabel#widemelonPhoneHint {
+            color: #ffffff;
+            font-size: 13px;
         }
         QListWidget#widemelonRecentList {
             color: rgba(255, 255, 255, 235);
@@ -1062,9 +1069,35 @@ void MainWindow::createHomePanel()
     buttonLayout->addWidget(openButton, 1);
     contentLayout->addLayout(buttonLayout);
 
+    homePhoneServerButton = makeButton(QIcon(), "Start phone server");
+    homePhoneServerButton->setText("Start phone server");
+    contentLayout->addWidget(homePhoneServerButton);
+
+    homePhoneQr = new QLabel(content);
+    homePhoneQr->setAlignment(Qt::AlignCenter);
+    homePhoneQr->setFixedSize(184, 184);
+    contentLayout->addWidget(homePhoneQr, 0, Qt::AlignHCenter);
+
+    homePhoneHint = new QLabel("Scan this QR code with your phone", content);
+    homePhoneHint->setObjectName("widemelonPhoneHint");
+    homePhoneHint->setAlignment(Qt::AlignCenter);
+    contentLayout->addWidget(homePhoneHint);
+
     connect(displayButton, &QPushButton::clicked, this, &MainWindow::onOpenWideMelonSettings);
     connect(phoneButton, &QPushButton::clicked, this, &MainWindow::onOpenPhoneScreenSettings);
     connect(openButton, &QPushButton::clicked, this, &MainWindow::onOpenFile);
+    connect(homePhoneServerButton, &QPushButton::clicked, this, [this]
+    {
+        PhoneBridgeManager* bridge = emuInstance->getPhoneBridge();
+        if (!bridge) return;
+        if (bridge->isListening())
+        {
+            bridge->stop();
+            return;
+        }
+        if (!bridge->start())
+            QMessageBox::warning(this, "Phone bridge unavailable", bridge->lastError());
+    });
     connect(homeRecentList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item)
     {
         openRecentFile(item->data(Qt::UserRole).toString());
@@ -1076,8 +1109,37 @@ void MainWindow::createHomePanel()
     panel->installEventFilter(this);
     homePanel->setGeometry(panel->rect());
     updateHomePanel();
+    if (PhoneBridgeManager* bridge = emuInstance->getPhoneBridge())
+    {
+        connect(bridge, &PhoneBridgeManager::statusChanged,
+                this, &MainWindow::updateHomePhoneUi, Qt::UniqueConnection);
+        connect(bridge, &PhoneBridgeManager::connectionChanged,
+                this, &MainWindow::updateHomePhoneUi, Qt::UniqueConnection);
+        connect(bridge, &PhoneBridgeManager::pairingChanged,
+                this, &MainWindow::updateHomePhoneUi, Qt::UniqueConnection);
+    }
+    updateHomePhoneUi();
     homePanel->setVisible(!emuThread->emuIsActive());
     homePanel->raise();
+}
+
+void MainWindow::updateHomePhoneUi()
+{
+    if (!homePhoneServerButton || !homePhoneQr || !homePhoneHint)
+        return;
+
+    PhoneBridgeManager* bridge = emuInstance ? emuInstance->getPhoneBridge() : nullptr;
+    const bool listening = bridge && bridge->isListening();
+    homePhoneServerButton->setText(listening ? "Stop phone server" : "Start phone server");
+    homePhoneServerButton->setAccessibleName(homePhoneServerButton->text());
+
+    const QString pairingUrl = listening ? bridge->pairingUrl() : QString();
+    homePhoneQr->setVisible(!pairingUrl.isEmpty());
+    homePhoneHint->setVisible(!pairingUrl.isEmpty());
+    if (!pairingUrl.isEmpty())
+        homePhoneQr->setPixmap(WideMelon::CreatePhonePairingQrCode(pairingUrl, 184));
+    else
+        homePhoneQr->clear();
 }
 
 void MainWindow::updateHomePanel()

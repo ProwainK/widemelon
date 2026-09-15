@@ -70,7 +70,10 @@ def main() -> None:
     dist = (root / args.dist).resolve()
     expected = {
         "application": dist / f"widemelon-{args.version}-source.tar.xz",
-        "dependencies/linux-x86_64": dist / f"widemelon-{args.version}-third-party-source.tar.xz",
+        "dependencies/linux-x86_64":
+            dist / f"widemelon-{args.version}-linux-x86_64-third-party-source.tar.xz",
+        "dependencies/linux-arm64":
+            dist / f"widemelon-{args.version}-linux-arm64-third-party-source.tar.xz",
         "dependencies/windows-x86_64": dist / f"widemelon-{args.version}-windows-x86_64-dependency-source.tar.gz",
         "dependencies/macos-x86_64": dist / f"widemelon-{args.version}-macos-x86_64-dependency-source.tar.gz",
         "dependencies/macos-arm64": dist / f"widemelon-{args.version}-macos-arm64-dependency-source.tar.gz",

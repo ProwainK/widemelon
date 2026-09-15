@@ -13,10 +13,11 @@ provenance, and the sources bundled or statically linked into each platform
 binary. Players do not need to download it.
 
 The archive contains `application/` for WideMelon, its build scripts, FAAD2,
-and ENet. `dependencies/linux-x86_64/` contains sources for shared libraries
-bundled in the AppImage. The other platform directories contain the matching
-vcpkg source downloads, pinned registry, ports, patches, and installed metadata
-for Windows x64, macOS Intel, and macOS Apple Silicon.
+and ENet. `dependencies/linux-x86_64/` and `dependencies/linux-arm64/` contain
+sources for shared libraries bundled in the matching AppImages. The other
+platform directories contain the matching vcpkg source downloads, pinned
+registry, ports, patches, and installed metadata for Windows x64, macOS Intel,
+and macOS Apple Silicon.
 
 To rebuild a native release with modified dependencies:
 

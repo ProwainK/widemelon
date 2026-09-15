@@ -9,12 +9,27 @@
   const canvas = document.getElementById('screen');
   const context = canvas.getContext('2d', {alpha: false});
   const dpad = document.getElementById('dpad');
+  const controller = document.getElementById('controller');
+  const virtualControls = document.getElementById('virtual-controls');
+  const gamepadMap = document.getElementById('gamepad-map');
+  const gamepadSettings = document.getElementById('gamepad-settings');
+  const gamepadHotkeys = document.getElementById('gamepad-hotkeys');
+  const hotkeyEditor = document.getElementById('hotkey-editor');
+  const hotkeyEditorBind = document.getElementById('hotkey-editor-bind');
+  const hotkeyEditorAction = document.getElementById('hotkey-editor-action');
+  const mappingPrompt = document.getElementById('mapping-prompt');
+  gamepadSettings.hidden = true;
   const pairing = document.getElementById('pairing');
   const pairingForm = document.getElementById('pairing-form');
   const pairingCode = document.getElementById('pairing-code');
   const pointers = new Map();
   let socket = null;
   let buttons = 0;
+  let gamepadButtons = 0;
+  let gamepadHotkeyMask = 0;
+  let gamepadIndex = null;
+  let showVirtualControls = false;
+  let inputSuspended = false;
   let hotkeys = 0;
   let touch = {active: false, x: 0, y: 0};
   let reconnectDelay = 250;
@@ -30,6 +45,187 @@
   let touchPointerId = null;
   let pendingFrame = null;
   let decoding = false;
+
+  const dsLabels = ['A', 'B', 'Select', 'Start', 'Right', 'Left', 'Up', 'Down', 'R', 'L', 'X', 'Y'];
+  const defaultMapping = ['b0', 'b1', 'b8', 'b9', 'b15', 'b14', 'b12', 'b13', 'b7', 'b6', 'b2', 'b3'];
+  const sourceLabels = new Map([
+    ['none', 'Not mapped'], ['b0', 'A / bottom'], ['b1', 'B / right'],
+    ['b2', 'X / left'], ['b3', 'Y / top'],
+    ['b4', 'Left shoulder'], ['b5', 'Right shoulder'],
+    ['b6', 'Left trigger'], ['b7', 'Right trigger'],
+    ['b8', 'Select / View'], ['b9', 'Start / Menu'], ['b10', 'Left stick click'],
+    ['b11', 'Right stick click'], ['b12', 'D-pad up'], ['b13', 'D-pad down'],
+    ['b14', 'D-pad left'], ['b15', 'D-pad right'],
+    ['a0-', 'Left stick left'], ['a0+', 'Left stick right'],
+    ['a1-', 'Left stick up'], ['a1+', 'Left stick down'],
+    ['a2-', 'Right stick left'], ['a2+', 'Right stick right'],
+    ['a3-', 'Right stick up'], ['a3+', 'Right stick down']
+  ]);
+  const hotkeyActions = [
+    [2, 'Pause / resume', 'Pause'], [3, 'Reset', 'Reset'], [11, 'Frame step', 'Frame step'],
+    [4, 'Fast forward', 'Fast Forward'], [17, 'Toggle fast forward', 'Fast F toggle'],
+    [16, 'Slow motion', 'Slow motion'], [18, 'Toggle slow motion', 'Slow toggle'],
+    [5, 'Toggle FPS limit', 'FPS limit'], [6, 'Desktop fullscreen', 'Fullscreen'],
+    [7, 'Swap screens', 'Swap screens'], [8, 'Swap screen emphasis', 'Swap emphasis'],
+    [0, 'Close / open lid', 'Lid'], [1, 'Microphone', 'Mic'], [15, 'Toggle audio mute', 'Mute'],
+    [12, 'DSi power', 'DSi power'], [13, 'DSi volume up', 'Volume +'], [14, 'DSi volume down', 'Volume −']
+  ];
+  const validHotkeys = new Set(hotkeyActions.map(([id]) => id));
+  const idleMappingPrompt = 'Select a control, then press a button on your controller.';
+  mappingPrompt.textContent = idleMappingPrompt;
+  const pageMapping = ['b10', 'b11'];
+  let gamepadMapping = [...defaultMapping];
+  let customizedButtons = Array(12).fill(false);
+  let stickAsDpad = true;
+  let hotkeyRows = [{id: 1, action: 4, source: 'none'}];
+  let lastPagePressed = [false, false];
+  let capture = null;
+  let editorRowId = null;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem('widemelonGamepadMapping') || 'null');
+    if (Array.isArray(saved?.buttons) && saved.buttons.length === 12
+        && saved.buttons.every(value => sourceLabels.has(value))) {
+      gamepadMapping = saved.buttons;
+      customizedButtons = Array.isArray(saved.customizedButtons) && saved.customizedButtons.length === 12
+          && saved.customizedButtons.every(value => typeof value === 'boolean')
+        ? saved.customizedButtons
+        : saved.buttons.map((value, index) => value !== defaultMapping[index]);
+      stickAsDpad = saved.stickAsDpad !== false;
+      if (Array.isArray(saved.hotkeyRows) && saved.hotkeyRows.length > 0 && saved.hotkeyRows.length <= hotkeyActions.length) {
+        if (saved.hotkeyRows.every(row => validHotkeys.has(row?.action) && sourceLabels.has(row?.source))) {
+          hotkeyRows = saved.hotkeyRows.map((row, index) => ({id: index + 1, action: row.action, source: row.source}));
+          if (hotkeyRows.length === 1 && hotkeyRows[0].source === 'none' && hotkeyRows[0].action === 17)
+            hotkeyRows[0].action = 4;
+        }
+      } else if (Array.isArray(saved.hotkeys) && saved.hotkeys.length === 23) {
+        const rows = hotkeyActions.filter(([id]) => sourceLabels.has(saved.hotkeys[id]) && saved.hotkeys[id] !== 'none')
+          .map(([action], index) => ({id: index + 1, action, source: saved.hotkeys[action]}));
+        if (rows.length) hotkeyRows = rows;
+      }
+    }
+  } catch (_) {}
+  let nextHotkeyRowId = hotkeyRows.length + 1;
+
+  function saveGamepadMapping() {
+    const savedRows = hotkeyRows.map(({action, source}) => ({action, source}));
+    try { localStorage.setItem('widemelonGamepadMapping', JSON.stringify({buttons: gamepadMapping, customizedButtons, hotkeyRows: savedRows, stickAsDpad})); }
+    catch (_) {}
+  }
+
+  function clearCapture(message = idleMappingPrompt) {
+    capture?.element?.classList.remove('waiting');
+    capture = null;
+    mappingPrompt.textContent = message;
+  }
+
+  function armCapture(kind, id, element, label) {
+    clearCapture();
+    capture = {kind, id, element, label, ready: false};
+    element.classList.add('waiting');
+    mappingPrompt.textContent = `Release the controller, then press the button for ${label}.`;
+  }
+
+  function renderDiagram() {
+    document.querySelectorAll('#controller-diagram .map-target').forEach(target => {
+      const bit = Number(target.dataset.dsBit);
+      target.classList.toggle('mapped', customizedButtons[bit]);
+    });
+  }
+
+  function renderHotkeys() {
+    gamepadHotkeys.innerHTML = hotkeyRows.map(row => `
+      <button class="hotkey-tile${row.source === 'none' ? '' : ' mapped'}" data-row-id="${row.id}" type="button">
+        ${shortActionLabel(row.action)}
+      </button>`).join('');
+    document.querySelectorAll('#gamepad-hotkeys .hotkey-tile').forEach(tile => {
+      tile.addEventListener('click', () => openHotkeyEditor(Number(tile.dataset.rowId)));
+    });
+  }
+
+  function shortActionLabel(action) {
+    return hotkeyActions.find(([id]) => id === action)?.[2] || 'Set action';
+  }
+
+  function openHotkeyEditor(rowId) {
+    const row = hotkeyRows.find(value => value.id === rowId);
+    if (!row) return;
+    clearCapture();
+    editorRowId = rowId;
+    hotkeyEditorAction.value = String(row.action);
+    hotkeyEditorBind.textContent = sourceLabels.get(row.source) || 'Press a controller button';
+    hotkeyEditor.hidden = false;
+  }
+
+  hotkeyEditorAction.innerHTML = hotkeyActions.map(([id, label]) => `<option value="${id}">${label}</option>`).join('');
+  hotkeyEditorAction.addEventListener('change', () => {
+    const row = hotkeyRows.find(value => value.id === editorRowId);
+    if (!row) return;
+    row.action = Number(hotkeyEditorAction.value);
+    renderHotkeys();
+    saveGamepadMapping();
+  });
+  hotkeyEditorBind.addEventListener('click', () => {
+    const row = hotkeyRows.find(value => value.id === editorRowId);
+    if (row) armCapture('hotkey', row.id, hotkeyEditorBind,
+      hotkeyActions.find(([id]) => id === row.action)?.[1] || 'hotkey');
+  });
+  document.getElementById('hotkey-editor-done').addEventListener('click', () => {
+    clearCapture();
+    hotkeyEditor.hidden = true;
+  });
+  document.getElementById('hotkey-editor-remove').addEventListener('click', () => {
+    clearCapture();
+    hotkeyRows = hotkeyRows.filter(value => value.id !== editorRowId);
+    if (!hotkeyRows.length) hotkeyRows.push({id: nextHotkeyRowId++, action: 4, source: 'none'});
+    editorRowId = null;
+    hotkeyEditor.hidden = true;
+    renderHotkeys();
+    saveGamepadMapping();
+  });
+
+  document.querySelectorAll('#controller-diagram .map-target').forEach(target => {
+    const bit = Number(target.dataset.dsBit);
+    const arm = () => armCapture('ds', bit, target, `DS ${dsLabels[bit]}`);
+    target.addEventListener('click', arm);
+    target.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') arm(); });
+    target.setAttribute('tabindex', '0');
+  });
+  document.getElementById('add-gamepad-hotkey').addEventListener('click', () => {
+    if (hotkeyRows.length >= hotkeyActions.length) return;
+    const used = new Set(hotkeyRows.map(row => row.action));
+    const action = hotkeyActions.find(([id]) => !used.has(id))?.[0] ?? 17;
+    const row = {id: nextHotkeyRowId++, action, source: 'none'};
+    hotkeyRows.push(row);
+    renderHotkeys();
+    saveGamepadMapping();
+    gamepadHotkeys.scrollTop = gamepadHotkeys.scrollHeight;
+    openHotkeyEditor(row.id);
+  });
+  document.getElementById('gamepad-reset').addEventListener('click', () => {
+    gamepadMapping = [...defaultMapping];
+    customizedButtons = Array(12).fill(false);
+    hotkeyRows = [{id: nextHotkeyRowId++, action: 4, source: 'none'}];
+    stickAsDpad = true;
+    clearCapture('Default mapping restored.');
+    renderDiagram();
+    renderHotkeys();
+    saveGamepadMapping();
+  });
+  function setGamepadSettingsVisible(visible) {
+    clearCapture();
+    hotkeyEditor.hidden = true;
+    if (visible) {
+      renderDiagram();
+      renderHotkeys();
+    }
+    gamepadSettings.hidden = !visible;
+  }
+
+  document.getElementById('gamepad-close').addEventListener('click', () => setGamepadSettingsVisible(false));
+  gamepadMap.addEventListener('click', () => setGamepadSettingsVisible(true));
+  renderDiagram();
+  renderHotkeys();
 
   function rememberCredential(value) {
     // Storage can be disabled even when the page and WebSocket are usable.
@@ -69,8 +265,8 @@
       value |= pointer.bits || 0;
       hotkeyValue |= pointer.hotkeys || 0;
     }
-    buttons = value;
-    hotkeys = hotkeyValue;
+    buttons = value | gamepadButtons;
+    hotkeys = hotkeyValue | gamepadHotkeyMask;
     document.querySelectorAll('[data-button], [data-hotkey]').forEach(el => {
       const active = el.dataset.button !== undefined
         ? (buttons & (1 << Number(el.dataset.button))) !== 0
@@ -80,6 +276,129 @@
     if (immediate) sendInputNow();
     else sendInput();
   }
+
+  function setGamepadMode(connected) {
+    virtualControls.hidden = !connected;
+    gamepadMap.hidden = !connected;
+    if (!connected) {
+      setGamepadSettingsVisible(false);
+      showVirtualControls = false;
+    }
+    const hideControls = connected && !showVirtualControls;
+    controller.classList.toggle('gamepad-mode', hideControls);
+    virtualControls.textContent = hideControls ? 'Show controls' : 'Hide controls';
+    const label = hideControls ? 'Show touch controls' : 'Hide touch controls';
+    virtualControls.setAttribute('aria-label', label);
+    virtualControls.title = label;
+    if (hideControls && pointers.size) {
+      pointers.clear();
+      dpad.classList.remove('active');
+      dpad.style.setProperty('--stick-x', '0px');
+      dpad.style.setProperty('--stick-y', '0px');
+      recalculateButtons(true);
+    }
+  }
+
+  function toggleVirtualControls() {
+    showVirtualControls = !showVirtualControls;
+    setGamepadMode(gamepadIndex !== null);
+  }
+  virtualControls.addEventListener('click', toggleVirtualControls);
+
+  function readGamepadButtons(pad) {
+    let bits = 0;
+    for (let bit = 0; bit < 12; bit++) {
+      if (sourcePressed(pad, gamepadMapping[bit])) bits |= 1 << bit;
+    }
+    if (stickAsDpad) {
+      const x = pad.axes[0] || 0;
+      const y = pad.axes[1] || 0;
+      if (x > 0.5) bits |= 1 << 4;
+      if (x < -0.5) bits |= 1 << 5;
+      if (y < -0.5) bits |= 1 << 6;
+      if (y > 0.5) bits |= 1 << 7;
+    }
+    return bits;
+  }
+
+  function readGamepadHotkeys(pad) {
+    let value = 0;
+    for (const row of hotkeyRows) {
+      if (sourcePressed(pad, row.source)) value |= 1 << row.action;
+    }
+    return value;
+  }
+
+  function sourcePressed(pad, source) {
+    if (source.startsWith('b')) return !!pad.buttons[Number(source.slice(1))]?.pressed;
+    if (source.startsWith('a')) {
+      const value = pad.axes[Number(source[1])] || 0;
+      return source[2] === '+' ? value > 0.5 : value < -0.5;
+    }
+    return false;
+  }
+
+  function finishCapture(source) {
+    if (!capture) return;
+    const completed = capture;
+    if (completed.kind === 'ds') {
+      gamepadMapping[completed.id] = source;
+      customizedButtons[completed.id] = true;
+    }
+    else {
+      const row = hotkeyRows.find(value => value.id === completed.id);
+      if (row) row.source = source;
+    }
+    saveGamepadMapping();
+    clearCapture(`Mapped ${completed.label} to ${sourceLabels.get(source)}.`);
+    renderDiagram();
+    renderHotkeys();
+    if (completed.kind === 'hotkey' && editorRowId === completed.id)
+      hotkeyEditorBind.textContent = sourceLabels.get(source) || 'Press a controller button';
+  }
+
+  function processPageButtons(pad) {
+    for (let index = 0; index < 2; index++) {
+      const pressed = pad ? sourcePressed(pad, pageMapping[index]) : false;
+      if (pressed && !lastPagePressed[index]) {
+        if (index === 0) toggleVirtualControls();
+        else setGamepadSettingsVisible(gamepadSettings.hidden);
+      }
+      lastPagePressed[index] = pressed;
+    }
+  }
+
+  function pollGamepad() {
+    let pads = [];
+    if (!inputSuspended && !document.hidden && typeof navigator.getGamepads === 'function') {
+      try { pads = navigator.getGamepads() || []; } catch (_) {}
+    }
+    let pad = gamepadIndex === null ? null : pads[gamepadIndex];
+    if (!pad?.connected || pad.mapping !== 'standard') {
+      pad = Array.from(pads).find(value => value?.connected && value.mapping === 'standard') || null;
+    }
+    const nextIndex = pad?.index ?? null;
+    if (nextIndex !== gamepadIndex) {
+      gamepadIndex = nextIndex;
+      setGamepadMode(pad !== null);
+    }
+    if (capture && pad && !gamepadSettings.hidden) {
+      const source = [...sourceLabels.keys()].find(value => sourcePressed(pad, value));
+      if (!capture.ready && !source) {
+        capture.ready = true;
+        mappingPrompt.textContent = `Press the controller button for ${capture.label}.`;
+      } else if (capture.ready && source) finishCapture(source);
+    } else processPageButtons(pad);
+    const nextButtons = pad && gamepadSettings.hidden ? readGamepadButtons(pad) : 0;
+    const nextHotkeys = pad && gamepadSettings.hidden ? readGamepadHotkeys(pad) : 0;
+    if (nextButtons !== gamepadButtons || nextHotkeys !== gamepadHotkeyMask) {
+      gamepadButtons = nextButtons;
+      gamepadHotkeyMask = nextHotkeys;
+      recalculateButtons(true);
+    }
+    requestAnimationFrame(pollGamepad);
+  }
+  requestAnimationFrame(pollGamepad);
 
   function bindButton(button) {
     if (button.dataset.inputBound) return;
@@ -243,6 +562,8 @@
 
   function releaseAll() {
     pointers.clear();
+    gamepadButtons = 0;
+    gamepadHotkeyMask = 0;
     buttons = 0;
     hotkeys = 0;
     touch = {active: false, x: 0, y: 0};
@@ -360,12 +681,13 @@
   }
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) releaseAll();
-    else sendInput();
+    if (document.hidden) { inputSuspended = true; releaseAll(); }
+    else { inputSuspended = false; sendInput(); }
   });
-  window.addEventListener('blur', releaseAll);
+  window.addEventListener('blur', () => { inputSuspended = true; releaseAll(); });
+  window.addEventListener('focus', () => { inputSuspended = false; sendInput(); });
   window.addEventListener('contextmenu', event => event.preventDefault());
-  window.addEventListener('pagehide', releaseAll);
+  window.addEventListener('pagehide', () => { inputSuspended = true; releaseAll(); });
   setInterval(sendInputNow, 200);
   const fullscreenButton = document.getElementById('fullscreen');
   fullscreenButton.addEventListener('click', () => {
