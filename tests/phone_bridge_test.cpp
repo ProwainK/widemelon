@@ -61,6 +61,107 @@ bool released(const PhoneBridgeManager& bridge)
 #define CHECK(condition) do { if (!(condition)) { \
     std::cerr << "Line " << __LINE__ << ": " << #condition << '\n'; return 1; } } while (false)
 
+// Use the production bridge with delayed application replies. An undelayed
+// loopback test cannot expose round-trip throughput limits or stale probes.
+int testDelayedNetwork(PhoneBridgeManager& bridge, bool testFrames)
+{
+    QWebSocket phone;
+    QUrl endpoint(bridge.url() + "bridge");
+    endpoint.setScheme("ws");
+    QNetworkRequest request(endpoint);
+    request.setRawHeader("Origin", bridge.url().chopped(1).toUtf8());
+    bool authenticated = false;
+    bool acknowledgeFrames = true;
+    int framesReceived = 0;
+    int inputSequence = 0;
+    quint32 latestFrame = 0;
+    QObject::connect(&phone, &QWebSocket::textMessageReceived, &phone, [&](const QString& text) {
+        const auto message = QJsonDocument::fromJson(text.toUtf8()).object();
+        if (message.value("type") == "hello") authenticated = true;
+        if (message.value("type") == "ping")
+            QTimer::singleShot(testFrames ? 0 : 900, &phone, [&, sent = message.value("sent")] {
+                send(phone, {{"v", 2}, {"type", "pong"}, {"sent", sent}});
+            });
+    });
+    QObject::connect(&phone, &QWebSocket::binaryMessageReceived, &phone, [&](const QByteArray& packet) {
+        framesReceived++;
+        latestFrame = qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(packet.constData() + 4));
+        if (acknowledgeFrames)
+            QTimer::singleShot(180, &phone, [&, frame = latestFrame] {
+                send(phone, {{"v", 2}, {"type", "frameAck"}, {"seq", double(frame)}, {"decodeMs", 3}});
+            });
+    });
+    phone.open(request);
+    CHECK(waitUntil([&] { return phone.state() == QAbstractSocket::ConnectedState; }));
+    send(phone, {{"v", 2}, {"type", "auth"}, {"credential", bridge.pairingCode()}});
+    CHECK(waitUntil([&] { return authenticated; }));
+    QTimer inputTimer;
+    QObject::connect(&inputTimer, &QTimer::timeout, [&] { send(phone, input(++inputSequence)); });
+    inputTimer.start(200);
+    QElapsedTimer elapsed;
+    elapsed.start();
+
+    if (!testFrames)
+    {
+        CHECK(waitUntil([&] { return elapsed.elapsed() >= 2200 || !bridge.isConnected(); }, 3000));
+        CHECK(bridge.isConnected() && bridge.metrics().protocolErrors == 0);
+        CHECK(bridge.metrics().roundTripMs >= 850);
+        inputTimer.stop();
+        CHECK(waitUntil([&] { return released(bridge); }, 1600));
+        CHECK(bridge.isConnected()); // pongs keep the connection, but not held input, alive
+        send(phone, input(++inputSequence));
+        CHECK(waitUntil([&] { return !released(bridge); }));
+        std::cout << "900 ms heartbeat replies remain valid; abandoned input releases independently\n";
+    }
+    else
+    {
+        QImage frame(256, 192, QImage::Format_RGB32);
+        frame.fill(Qt::red);
+        QTimer capture;
+        QObject::connect(&capture, &QTimer::timeout, [&] { bridge.submitFrame(frame); });
+        capture.setTimerType(Qt::PreciseTimer);
+        capture.start(33);
+        CHECK(waitUntil([&] { return elapsed.elapsed() >= 2500 || !bridge.isConnected(); }, 3500));
+        std::cout << "180 ms frame ACK delay: " << framesReceived << " frames in " << elapsed.elapsed() << " ms\n";
+        CHECK(bridge.isConnected() && framesReceived >= 65);
+        capture.stop();
+        CHECK(waitUntil([&] { return bridge.metrics().framesAcked == bridge.metrics().framesSent; }));
+
+        // A stalled decoder fills the bounded window, even while controls
+        // and heartbeat replies continue. Old timeout logic leaked send credit.
+        acknowledgeFrames = false;
+        const quint32 lastAcknowledgedFrame = latestFrame;
+        const int beforeStall = framesReceived;
+        capture.start(33);
+        elapsed.restart();
+        CHECK(waitUntil([&] { return elapsed.elapsed() >= 1100; }));
+        CHECK(bridge.isConnected());
+        CHECK(framesReceived - beforeStall > 1 && framesReceived - beforeStall <= 8);
+        const int atCapacity = framesReceived;
+        send(phone, {{"v", 2}, {"type", "frameAck"}, {"seq", double(lastAcknowledgedFrame)}});
+        send(phone, {{"v", 2}, {"type", "frameAck"}, {"seq", double(0xFFFFFFFFU)}});
+        elapsed.restart();
+        CHECK(waitUntil([&] { return elapsed.elapsed() >= 100; }));
+        CHECK(framesReceived == atCapacity); // stale and unknown ACKs grant no credit
+
+        // The browser can skip frames while decoding. One latest-frame ACK
+        // retires them and immediately delivers the newest pending frame.
+        const auto ackedBeforeRecovery = bridge.metrics().framesAcked;
+        send(phone, {{"v", 2}, {"type", "frameAck"}, {"seq", double(latestFrame)}});
+        CHECK(waitUntil([&] { return framesReceived > atCapacity; }));
+        CHECK(bridge.metrics().framesAcked == ackedBeforeRecovery + 1);
+        CHECK(latestFrame > quint32(atCapacity + 10));
+        elapsed.restart();
+        CHECK(waitUntil([&] { return elapsed.elapsed() >= 1100; }));
+        CHECK(framesReceived - atCapacity <= 8);
+        CHECK(waitUntil([&] { return !bridge.isConnected(); }, 3500));
+        CHECK(released(bridge) && bridge.metrics().acknowledgementTimeouts == 1);
+        std::cout << "Stalled video stays bounded, recovers to the latest frame, and times out safely\n";
+    }
+    bridge.stop();
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
@@ -85,6 +186,8 @@ int main(int argc, char** argv)
     bridge.setSettings(settings);
     bridge.setCaptureAvailable(true);
     CHECK(bridge.start());
+    if (application.arguments().contains("--delayed-pong")) return testDelayedNetwork(bridge, false);
+    if (application.arguments().contains("--delayed-frames")) return testDelayedNetwork(bridge, true);
     if (application.arguments().contains("--browser-smoke"))
     {
         // Optional real-browser harness: loopback only, no emulator or ROM.
@@ -261,7 +364,7 @@ int main(int argc, char** argv)
     CHECK(waitUntil([&] { return frameCount == 1; }));
     const quint32 firstSequence = receivedSequence;
     // Stall GUI delivery while the encoder produces frames. Only the newest
-    // result may reach the socket once the first frame is acknowledged.
+    // result may reach the socket once the GUI processes events again.
     for (int i = 0; i < 12; i++)
     {
         bridge.submitFrame(frame);
@@ -397,7 +500,9 @@ int main(int argc, char** argv)
     CHECK(waitUntil([&] { return bridge.isConnected(); }));
     send(idle, input());
     CHECK(waitUntil([&] { return !released(bridge); }));
-    CHECK(waitUntil([&] { return !bridge.isConnected(); }, 1800));
+    CHECK(waitUntil([&] { return released(bridge); }, 1800));
+    CHECK(bridge.isConnected());
+    CHECK(waitUntil([&] { return !bridge.isConnected(); }, 2500));
     CHECK(released(bridge));
 
     QWebSocket pending;

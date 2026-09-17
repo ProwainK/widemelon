@@ -68,6 +68,8 @@ if(BUILD_TESTING)
         qt_import_plugins(phone_bridge_test INCLUDE Qt::QJpegPlugin)
     endif()
     add_test(NAME phone_bridge COMMAND phone_bridge_test)
+    add_test(NAME phone_delayed_pong COMMAND phone_bridge_test --delayed-pong)
+    add_test(NAME phone_delayed_frames COMMAND phone_bridge_test --delayed-frames)
     if(APPLE)
         set(WIDEMELON_TEST_QPA cocoa)
     elseif(WIN32)
@@ -75,7 +77,7 @@ if(BUILD_TESTING)
     else()
         set(WIDEMELON_TEST_QPA offscreen)
     endif()
-    set_tests_properties(phone_bridge PROPERTIES TIMEOUT 20
+    set_tests_properties(phone_bridge phone_delayed_pong phone_delayed_frames PROPERTIES TIMEOUT 20
         ENVIRONMENT "QT_QPA_PLATFORM=${WIDEMELON_TEST_QPA}")
 
     add_executable(phone_firewall_test phone_firewall_test.cpp ../src/frontend/qt_sdl/PhoneFirewall.cpp)

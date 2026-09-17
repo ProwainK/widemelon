@@ -26,6 +26,10 @@ async function waitFor(check) {
   const children = [];
   let cdp;
   const benchmark = process.argv.includes('--benchmark');
+  const ackDelayMs = Number(process.env.WIDEMELON_BENCH_ACK_DELAY_MS || 0);
+  const pongDelayMs = Number(process.env.WIDEMELON_BENCH_PONG_DELAY_MS || 0);
+  for (const ms of [ackDelayMs, pongDelayMs])
+    assert(Number.isInteger(ms) && ms >= 0 && ms <= 2000, 'Reply delays must be 0–2000 ms');
   try {
     const bridgeArgs = ['--browser-smoke'];
     if (process.argv.includes('--dialog')) bridgeArgs.push('--benchmark-dialog');
@@ -97,10 +101,12 @@ async function waitFor(check) {
       await tab('Emulation.setCPUThrottlingRate', {rate: Number(process.env.WIDEMELON_BENCH_CPU || 1)});
       await tab('Page.addScriptToEvaluateOnNewDocument', {source: `
         window.bench = {arrivals: [], decodes: [], draws: [], inputs: 0, ack: 0};
+        window.networkCloses = [];
         const NativeSocket = WebSocket;
         window.WebSocket = class extends NativeSocket {
           constructor(...args) {
             super(...args);
+            this.addEventListener('close', e => networkCloses.push({code: e.code, reason: e.reason}));
             this.addEventListener('message', e => {
               if (typeof e.data !== 'string') bench.arrivals.push(performance.now());
             });
@@ -109,6 +115,12 @@ async function waitFor(check) {
             const message = JSON.parse(data);
             if (message.type === 'input') bench.inputs++;
             if (message.type === 'frameAck') bench.ack++;
+            const replyDelay = message.type === 'frameAck' ? ${ackDelayMs}
+              : message.type === 'pong' ? ${pongDelayMs} : 0;
+            if (replyDelay) {
+              setTimeout(() => { if (this.readyState === NativeSocket.OPEN) super.send(data); }, replyDelay);
+              return;
+            }
             return super.send(data);
           }
         };
@@ -151,7 +163,9 @@ async function waitFor(check) {
     const touch = (type, touchPoints) => tab('Input.dispatchTouchEvent', {type, touchPoints});
     if (benchmark) {
       const evaluate = async expression => (await tab('Runtime.evaluate', {expression, returnByValue: true})).result.value;
-      for (const phase of ['idle', 'motion', 'buttons']) {
+      const phases = ['idle', 'motion', 'buttons'];
+      if (process.argv.includes('--gamepad')) phases.push('gamepad');
+      for (const phase of phases) {
         if (phase === 'motion') {
           await touch('touchStart', [point(3, screen)]);
           await waitFor(() => state.touch >= 0x80000000);
@@ -164,6 +178,10 @@ async function waitFor(check) {
           }, 1000 / 120)`);
         }
         if (phase === 'buttons') await touch('touchStart', fingers);
+        if (phase === 'gamepad') {
+          await evaluate('testPad.connected = true; testPad.buttons[0].pressed = true');
+          await waitFor(() => state.keys === 0xFFE);
+        }
         await delay(500);
         const before = {...state};
         guiMaxMs = 0;
@@ -174,6 +192,7 @@ async function waitFor(check) {
         const browser = await evaluate('bench');
         const gaps = browser.draws.slice(1).map((value, index) => value - browser.draws[index]).sort((a, b) => a - b);
         const result = {revision: process.env.WIDEMELON_BENCH_REVISION || 'working', phase,
+          ackDelayMs, pongDelayMs, closes: await evaluate('networkCloses'),
           cpu: process.env.WIDEMELON_BENCH_CPU || '1', dialog: process.argv.includes('--dialog'),
           offeredFps: (state.framesOffered - before.framesOffered) / seconds,
           encodedFps: (state.framesEncoded - before.framesEncoded) / seconds,
@@ -184,11 +203,16 @@ async function waitFor(check) {
           decodeMs: browser.decodes.reduce((a, b) => a + b, 0) / browser.decodes.length,
           drawGap95Ms: gaps[Math.floor(gaps.length * 0.95)], guiMaxMs};
         console.log(JSON.stringify(result));
+        assert.equal(result.closes.length, 0, 'network delays must not disconnect a healthy client');
         assert(result.offeredFps >= 28.5 && result.offeredFps <= 31, 'test frame source must stay near 30 FPS');
         assert(result.displayedFps >= 28.5, 'stream must stay near 30 FPS during each six-second phase');
         if (phase === 'motion') assert(result.inputsPerSecond >= 20, 'benchmark must actually exercise input');
         await evaluate('clearInterval(window.benchMove)');
-        if (phase !== 'idle') await touch('touchEnd', []);
+        if (phase === 'gamepad') {
+          assert.equal(state.keys, 0xFFE, 'gamepad hold survives delayed frame and heartbeat replies');
+          await evaluate('testPad.connected = false');
+          await waitFor(() => state.keys === 0xFFF);
+        } else if (phase !== 'idle') await touch('touchEnd', []);
       }
       return;
     }
