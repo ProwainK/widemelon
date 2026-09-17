@@ -179,7 +179,9 @@ private:
     QTimer* testPatternTimer = nullptr;
     QElapsedTimer heartbeatClock;
     qint64 lastHeartbeatMs = 0;
+    qint64 lastInputMs = 0;
     qint64 lastPingSentMs = 0;
+    bool pingPending = false;
     qint64 controlRateWindowMs = 0;
     int controlMessagesInWindow = 0;
     quint32 lastInputSequence = 0;
@@ -197,9 +199,12 @@ private:
     std::atomic<quint32> frameSequence {0};
     std::atomic<quint32> connectionGeneration {0};
 
-    bool frameInFlight = false;
-    quint32 inFlightSequence = 0;
-    qint64 inFlightSentMs = 0;
+    struct SentFrame
+    {
+        quint32 sequence;
+        qint64 sentMs;
+    };
+    QList<SentFrame> inFlightFrames;
     QByteArray pendingPacket;
     quint32 pendingSequence = 0;
 };

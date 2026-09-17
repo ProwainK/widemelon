@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <iterator>
 
 #include <QBuffer>
 #include <QDateTime>
@@ -38,7 +39,12 @@
 
 namespace
 {
-constexpr int kHeartbeatTimeoutMs = 1000;
+constexpr int kInputTimeoutMs = 1000;
+constexpr int kConnectionTimeoutMs = 3000;
+constexpr int kFrameAckTimeoutMs = 3000;
+// Allow 30 FPS across a ~200 ms round trip while bounding the TCP backlog.
+// At capacity, the encoder retains only the newest unsent frame.
+constexpr int kMaxInFlightFrames = 8;
 constexpr int kAuthenticationTimeoutMs = 3000;
 constexpr int kMaxPendingClients = 4;
 constexpr int kMaxLiveLogs = 1000;
@@ -442,10 +448,12 @@ void PhoneBridgeManager::closeClient(QWebSocketProtocol::CloseCode code, const Q
         client = nullptr;
         if (old->state() == QAbstractSocket::ConnectedState) old->close(code, reason);
         old->deleteLater();
-        log(Info, "websocket", "Phone disconnected; restored desktop bottom screen");
+        log(Info, "websocket", QString("Phone disconnected (%1, code %2); restored desktop bottom screen")
+            .arg(reason).arg(int(code)));
     }
     pendingPacket.clear();
-    frameInFlight = false;
+    inFlightFrames.clear();
+    pingPending = false;
     clientAddressLabel.clear();
     resetRemoteInput();
     setConnected(false);
@@ -566,6 +574,8 @@ bool PhoneBridgeManager::exportDiagnostics(const QString& path, const PhoneFirew
     root["bytesSent"] = qint64(m.bytesSent);
     root["protocolErrors"] = qint64(m.protocolErrors);
     root["authenticationFailures"] = qint64(m.authenticationFailures);
+    root["acknowledgementTimeouts"] = qint64(m.acknowledgementTimeouts);
+    root["framesInFlight"] = int(inFlightFrames.size());
     root["lastEncodeMs"] = m.lastEncodeMs;
     root["averageEncodeMs"] = m.averageEncodeMs;
     root["roundTripMs"] = m.roundTripMs;
@@ -740,13 +750,13 @@ void PhoneBridgeManager::acceptWebSocket()
         {
             // Qt also closes sockets internally for invalid WebSocket frames.
             if (client == socket && state != QAbstractSocket::ConnectedState)
-                closeClient(QWebSocketProtocol::CloseCodeGoingAway, "Connection ended");
+                closeClient(socket->closeCode(), "Connection ended");
         });
         connect(socket, &QWebSocket::disconnected, this, [this, socket]
         {
             pendingClients.remove(socket);
             if (client == socket)
-                closeClient(QWebSocketProtocol::CloseCodeGoingAway, "Connection ended");
+                closeClient(socket->closeCode(), "Connection ended");
             socket->deleteLater();
         });
         QTimer::singleShot(kAuthenticationTimeoutMs, socket, [this, socket]
@@ -792,8 +802,10 @@ void PhoneBridgeManager::authenticateClient(QWebSocket* socket)
     }
     client = socket;
     clientAddressLabel = sanitizedAddress(socket->peerAddress());
-    lastHeartbeatMs = heartbeatClock.elapsed();
-    lastPingSentMs = 0;
+    lastHeartbeatMs = lastInputMs = heartbeatClock.elapsed();
+    lastPingSentMs = lastHeartbeatMs;
+    pingPending = false;
+    lastInputSequence = 0;
     controlRateWindowMs = lastHeartbeatMs;
     controlMessagesInWindow = 0;
     currentStatus = "Connected to paired phone";
@@ -909,7 +921,7 @@ void PhoneBridgeManager::handleTextMessage(const QString& message)
             return;
         }
         lastInputSequence = sequence;
-        lastHeartbeatMs = messageTime;
+        lastHeartbeatMs = lastInputMs = messageTime;
         remoteKeys.store(keys);
         remoteHotkeys.store(hotkeys);
         remoteTouch.store(touch);
@@ -928,15 +940,22 @@ void PhoneBridgeManager::handleTextMessage(const QString& message)
             closeClient(QWebSocketProtocol::CloseCodeProtocolError, "Protocol violation");
             return;
         }
-        lastHeartbeatMs = messageTime;
         const quint32 sequence = quint32(sequenceValue);
-        if (frameInFlight && sequence == inFlightSequence)
+        const auto acknowledged = std::find_if(inFlightFrames.cbegin(), inFlightFrames.cend(),
+            [sequence](const SentFrame& frame) { return frame.sequence == sequence; });
+        if (acknowledged != inFlightFrames.cend())
         {
-            frameInFlight = false;
+            lastHeartbeatMs = messageTime;
+            const qint64 sentMs = acknowledged->sentMs;
+            const int skipped = int(std::distance(inFlightFrames.cbegin(), acknowledged));
+            // The browser decodes in order, replacing its pending frame when
+            // busy. Its ACK also retires any earlier frames it skipped.
+            inFlightFrames.erase(inFlightFrames.begin(), inFlightFrames.begin() + skipped + 1);
             {
                 QMutexLocker lock(&stateMutex);
                 currentMetrics.framesAcked++;
-                currentMetrics.frameAckMs = messageTime - inFlightSentMs;
+                currentMetrics.framesDropped += skipped;
+                currentMetrics.frameAckMs = messageTime - sentMs;
                 currentMetrics.maxFrameAckMs = std::max(currentMetrics.maxFrameAckMs, currentMetrics.frameAckMs);
                 // Optional telemetry from newer clients. Invalid telemetry is
                 // ignored; it must not affect acceptance or ACK/backpressure.
@@ -954,16 +973,17 @@ void PhoneBridgeManager::handleTextMessage(const QString& message)
     else if (type == "pong")
     {
         const double sentValue = object.value("sent").toDouble(-1);
-        if (object.value("sent").isDouble() && lastPingSentMs > 0 && sentValue == double(lastPingSentMs))
+        if (object.value("sent").isDouble() && pingPending && sentValue == double(lastPingSentMs))
         {
             lastHeartbeatMs = messageTime;
+            pingPending = false;
             QMutexLocker lock(&stateMutex);
-            currentMetrics.roundTripMs = std::max<qint64>(0, heartbeatClock.elapsed() - lastPingSentMs);
+            currentMetrics.roundTripMs = messageTime - lastPingSentMs;
         }
         else
         {
             { QMutexLocker lock(&stateMutex); currentMetrics.protocolErrors++; }
-            closeClient(QWebSocketProtocol::CloseCodeProtocolError, "Protocol violation");
+            closeClient(QWebSocketProtocol::CloseCodeProtocolError, "Invalid heartbeat reply");
         }
     }
     else if (type == "visibility" && object.value("hidden").isBool())
@@ -991,22 +1011,27 @@ void PhoneBridgeManager::checkHeartbeat()
     }
     if (!client) return;
     const qint64 now = heartbeatClock.elapsed();
-    if (frameInFlight && now - inFlightSentMs > 500)
-    {
-        frameInFlight = false;
-        { QMutexLocker lock(&stateMutex); currentMetrics.framesDropped++; currentMetrics.acknowledgementTimeouts++; }
-        log(Debug, "stream", "Frame acknowledgement timed out; sending latest frame");
-        sendPendingFrame();
-    }
-    if (now - lastHeartbeatMs > kHeartbeatTimeoutMs)
+    // Video ACKs and pongs must not keep abandoned controls held. Release
+    // input promptly, but give a brief network pause time to recover.
+    if (now - lastInputMs > kInputTimeoutMs) resetRemoteInput();
+    if (now - lastHeartbeatMs > kConnectionTimeoutMs)
     {
         log(Error, "websocket", "Heartbeat timed out; releasing all phone input");
         closeClient(QWebSocketProtocol::CloseCodeGoingAway, "Heartbeat timeout");
         return;
     }
-    if (now - lastPingSentMs >= 500)
+    if (!inFlightFrames.isEmpty() && now - inFlightFrames.first().sentMs > kFrameAckTimeoutMs)
+    {
+        { QMutexLocker lock(&stateMutex); currentMetrics.acknowledgementTimeouts++; }
+        // Timing out cannot remove bytes already queued in TCP. Never free
+        // a slot here and add more stale video to a stalled connection.
+        closeClient(QWebSocketProtocol::CloseCodeGoingAway, "Frame acknowledgement timeout");
+        return;
+    }
+    if (!pingPending && now - lastPingSentMs >= 500)
     {
         lastPingSentMs = now;
+        pingPending = true;
         QJsonObject ping{{"v", PhoneProtocol::Version}, {"type", "ping"}, {"sent", double(now)}};
         client->sendTextMessage(QString::fromUtf8(QJsonDocument(ping).toJson(QJsonDocument::Compact)));
     }
@@ -1040,6 +1065,7 @@ void PhoneBridgeManager::samplePerformance(qint64 now)
         {"frameAckMs", m.frameAckMs}, {"maxFrameAckMs", m.maxFrameAckMs},
         {"browserDecodeMs", m.browserDecodeMs}, {"maxBrowserDecodeMs", m.maxBrowserDecodeMs},
         {"guiDelayMs", double(maxHeartbeatDelayMs)}, {"socketQueuedBytes", double(client ? client->bytesToWrite() : 0)},
+        {"framesInFlight", int(inFlightFrames.size())}, {"roundTripMs", m.roundTripMs},
         {"acknowledgementTimeouts", double(m.acknowledgementTimeouts - sampledMetrics.acknowledgementTimeouts)},
         {"jpegBytes", m.lastFrameBytes}
     });
@@ -1076,13 +1102,7 @@ void PhoneBridgeManager::encodedFrameReady(quint32 generation, quint32 sequence,
         currentMetrics.deliveryMs = deliveryMs;
         currentMetrics.maxDeliveryMs = std::max(currentMetrics.maxDeliveryMs, deliveryMs);
     }
-    if (frameInFlight)
-    {
-        if (!pendingPacket.isEmpty()) { QMutexLocker lock(&stateMutex); currentMetrics.framesDropped++; }
-        pendingPacket = packet;
-        pendingSequence = sequence;
-        return;
-    }
+    if (!pendingPacket.isEmpty()) { QMutexLocker lock(&stateMutex); currentMetrics.framesDropped++; }
     pendingPacket = packet;
     pendingSequence = sequence;
     sendPendingFrame();
@@ -1090,13 +1110,16 @@ void PhoneBridgeManager::encodedFrameReady(quint32 generation, quint32 sequence,
 
 void PhoneBridgeManager::sendPendingFrame()
 {
-    if (!client || pendingPacket.isEmpty() || frameInFlight || client->bytesToWrite() != 0) return;
+    if (!client || pendingPacket.isEmpty() || inFlightFrames.size() >= kMaxInFlightFrames
+        || client->bytesToWrite() != 0) return;
     const QByteArray packet = std::move(pendingPacket);
     pendingPacket.clear();
-    inFlightSequence = pendingSequence;
-    inFlightSentMs = heartbeatClock.elapsed();
-    frameInFlight = true;
-    client->sendBinaryMessage(packet);
+    inFlightFrames.append({pendingSequence, heartbeatClock.elapsed()});
+    if (client->sendBinaryMessage(packet) != packet.size())
+    {
+        closeClient(QWebSocketProtocol::CloseCodeGoingAway, "Frame send failed");
+        return;
+    }
     QMutexLocker lock(&stateMutex);
     currentMetrics.framesSent++;
     currentMetrics.bytesSent += packet.size();
@@ -1115,7 +1138,6 @@ void PhoneBridgeManager::resetRemoteInput()
     remoteKeys.store(0xFFF);
     remoteHotkeys.store(0);
     remoteTouch.store(0);
-    lastInputSequence = 0;
 }
 
 void PhoneBridgeManager::setConnected(bool value)
