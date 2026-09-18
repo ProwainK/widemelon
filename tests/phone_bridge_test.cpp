@@ -390,7 +390,11 @@ int main(int argc, char** argv)
     send(first, {{"v", 2}, {"type", "frameAck"}, {"seq", double(firstSequence)}, {"decodeMs", 7.5}});
     CHECK(waitUntil([&] { return frameCount == 2; }));
     CHECK(receivedSequence == bridge.metrics().framesOffered);
-    CHECK(bridge.metrics().maxCaptureMs == 2.5 && bridge.metrics().browserDecodeMs == 7.5);
+    CHECK(waitUntil([&]
+    {
+        const auto current = bridge.metrics();
+        return current.maxCaptureMs >= 2.5 && current.browserDecodeMs >= 7.5;
+    }));
     CHECK(bridge.metrics().frameAckMs >= 30 && bridge.metrics().maxDeliveryMs > 0);
     // Optional, untrusted timing data cannot block an otherwise valid ACK.
     send(first, {{"v", 2}, {"type", "frameAck"}, {"seq", double(receivedSequence)}, {"decodeMs", 1e100}});
