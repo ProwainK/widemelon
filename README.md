@@ -20,6 +20,10 @@ games a genuinely wider 3D view. It reveals more of the game world at the
 sides while keeping menus, sprites, videos, and the touchscreen at their
 original proportions.
 
+<p align="center">
+  <img src="assets/widemelon-preview.png" alt="WideMelon" width="1220">
+</p>
+
 For a more console-like setup, WideMelon can also send the bottom screen to
 your phone and use it as a touch controller. No separate mobile app is needed:
 scan the QR code and play from your phone's browser.
