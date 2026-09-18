@@ -21,6 +21,16 @@
     <binary>widemelon</binary>
   </provides>
   <releases>
+    <release version="1.0.4" date="2026-09-18">
+      <description>
+        <ul>
+          <li>Adds smoother phone-screen streaming on higher-latency networks.</li>
+          <li>Adds clearer phone bridge latency and connection diagnostics.</li>
+          <li>Fixes delayed replies, stalled video buffering, and remote input cleanup.</li>
+          <li>Keeps phone network settings visible without awkward scrolling.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.3" date="2026-09-15">
       <description>
         <ul>

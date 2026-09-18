@@ -28,6 +28,7 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -42,7 +43,7 @@
 
 namespace
 {
-constexpr int kPairingQrSize = 168;
+constexpr int kPairingQrSize = 120;
 
 QString addressLabel(const QString& value)
 {
@@ -255,8 +256,8 @@ PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* paren
     resize(560, 680);
 
     auto root = new QVBoxLayout(this);
-    root->setContentsMargins(14, 14, 14, 14);
-    root->setSpacing(10);
+    root->setContentsMargins(12, 12, 12, 12);
+    root->setSpacing(8);
 
     warning = new QLabel("Use only on a private home network you trust. Pairing prevents other devices from connecting, but the connection is not encrypted.");
     warning->setWordWrap(true);
@@ -264,17 +265,21 @@ PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* paren
     root->addWidget(warning);
 
     auto sessionBox = new QGroupBox("Session");
-    auto sessionLayout = new QFormLayout(sessionBox);
+    auto sessionLayout = new QGridLayout(sessionBox);
+    auto sessionDetails = new QFormLayout;
     status = new QLabel;
     address = new QLabel;
     address->setWordWrap(true);
+    // URLs have no natural word break. Let the form shrink them instead of
+    // making Qt 5 widen the entire dialog to their unbroken size hint.
+    address->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     address->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    sessionLayout->addRow("Status", status);
+    sessionDetails->addRow("Status", status);
     auto addressRow = new QHBoxLayout;
     addressRow->addWidget(address, 1);
     auto copy = new QPushButton("Copy URL");
     addressRow->addWidget(copy);
-    sessionLayout->addRow("Phone URL", addressRow);
+    sessionDetails->addRow("Phone URL", addressRow);
     pairingQr = new QLabel;
     pairingQr->setAlignment(Qt::AlignCenter);
     pairingQr->setFixedSize(kPairingQrSize, kPairingQrSize);
@@ -286,14 +291,59 @@ PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* paren
     codeFont.setBold(true);
     codeFont.setPointSize(codeFont.pointSize() + 4);
     pairingCode->setFont(codeFont);
-    sessionLayout->addRow("Manual code", pairingCode);
+    sessionDetails->addRow("Manual code", pairingCode);
     connectedClient = new QLabel("None");
-    sessionLayout->addRow("Connected phone", connectedClient);
-    sessionLayout->addRow("Scan to pair", pairingQr);
+    sessionDetails->addRow("Connected phone", connectedClient);
+    sessionLayout->addLayout(sessionDetails, 0, 0, 2, 1);
+    auto pairingLabel = new QLabel("Scan to pair");
+    pairingLabel->setAlignment(Qt::AlignCenter);
+    sessionLayout->addWidget(pairingLabel, 0, 1);
+    sessionLayout->addWidget(pairingQr, 1, 1, Qt::AlignTop | Qt::AlignHCenter);
+    sessionLayout->setColumnStretch(0, 1);
     root->addWidget(sessionBox);
 
-    // Keep pairing details and actions outside the scrolling settings area.
-    // Expanded diagnostics must not push them off a smaller laptop screen.
+    auto networkBox = new QGroupBox("Network && stream");
+    networkBox->setObjectName("phoneNetworkSettings");
+    auto form = new QGridLayout(networkBox);
+    auto interfaceRow = new QHBoxLayout;
+    interfaceBox = new QComboBox;
+    // Adapter descriptions can be long. Qt 5 otherwise uses the longest item
+    // as the minimum width and prevents the dialog from fitting small screens.
+    interfaceBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    interfaceBox->setMinimumContentsLength(18);
+    interfaceRow->addWidget(interfaceBox, 1);
+    auto refresh = new QPushButton("Refresh");
+    interfaceRow->addWidget(refresh);
+    form->addWidget(new QLabel("IPv4 interface"), 0, 0);
+    form->addLayout(interfaceRow, 0, 1, 1, 3);
+    port = new QSpinBox;
+    port->setRange(1024, 65534);
+    port->setToolTip("The web page, video, and controls share this TCP port.");
+    form->addWidget(new QLabel("Base port"), 1, 0);
+    form->addWidget(port, 1, 1);
+    quality = new QSpinBox;
+    quality->setRange(30, 100);
+    quality->setSuffix("%");
+    form->addWidget(new QLabel("JPEG quality"), 1, 2);
+    form->addWidget(quality, 1, 3);
+    auto fps = new QLabel("30 FPS · 256 × 192 · latest frame wins");
+    form->addWidget(new QLabel("Stream"), 2, 0);
+    form->addWidget(fps, 2, 1, 1, 3);
+    auto layoutButton = new QPushButton("Controller layout…");
+    layoutButton->setToolTip("Arrange and resize the phone screen and controls with the mouse.");
+    auto securityButton = new QPushButton("Security…");
+    firewallButton = new QPushButton("Firewall help…");
+    auto networkActions = new QHBoxLayout;
+    networkActions->addWidget(layoutButton);
+    networkActions->addWidget(securityButton);
+    networkActions->addWidget(firewallButton);
+    form->addLayout(networkActions, 3, 0, 1, 4);
+    form->setColumnStretch(1, 1);
+    form->setColumnStretch(3, 1);
+    root->addWidget(networkBox);
+
+    // Everyday connection settings stay visible. Only expandable diagnostics
+    // and logs scroll when the dialog is constrained on a smaller screen.
     auto settingsArea = new QScrollArea;
     settingsArea->setWidgetResizable(true);
     settingsArea->setFrameShape(QFrame::NoFrame);
@@ -302,33 +352,6 @@ PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* paren
     settingsLayout->setContentsMargins(0, 0, 0, 0);
     settingsArea->setWidget(settingsContents);
     root->addWidget(settingsArea, 1);
-
-    auto networkBox = new QGroupBox("Network & stream");
-    auto form = new QFormLayout(networkBox);
-    auto interfaceRow = new QHBoxLayout;
-    interfaceBox = new QComboBox;
-    interfaceRow->addWidget(interfaceBox, 1);
-    auto refresh = new QPushButton("Refresh");
-    interfaceRow->addWidget(refresh);
-    form->addRow("IPv4 interface", interfaceRow);
-    port = new QSpinBox;
-    port->setRange(1024, 65534);
-    port->setToolTip("The web page, video, and controls share this TCP port.");
-    form->addRow("Base port", port);
-    quality = new QSpinBox;
-    quality->setRange(30, 100);
-    quality->setSuffix("%");
-    form->addRow("JPEG quality", quality);
-    auto fps = new QLabel("30 FPS · 256 × 192 · latest frame wins");
-    form->addRow("Stream", fps);
-    auto layoutButton = new QPushButton("Edit controller layout…");
-    layoutButton->setToolTip("Arrange and resize the phone screen and controls with the mouse.");
-    form->addRow("Phone controls", layoutButton);
-    auto securityButton = new QPushButton("Security details…");
-    form->addRow("Advanced", securityButton);
-    firewallButton = new QPushButton("Firewall setup guide…");
-    form->addRow("Connection help", firewallButton);
-    settingsLayout->addWidget(networkBox);
 
     auto diagnosticsBox = new QGroupBox("Advanced diagnostics");
     diagnosticsBox->setCheckable(true);

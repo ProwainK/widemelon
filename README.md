@@ -20,6 +20,10 @@ games a genuinely wider 3D view. It reveals more of the game world at the
 sides while keeping menus, sprites, videos, and the touchscreen at their
 original proportions.
 
+<p align="center">
+  <img src="assets/widemelon-preview.png" alt="WideMelon" width="1220">
+</p>
+
 For a more console-like setup, WideMelon can also send the bottom screen to
 your phone and use it as a touch controller. No separate mobile app is needed:
 scan the QR code and play from your phone's browser.
@@ -54,7 +58,7 @@ Development builds from the newest commit are available from the
 Download and install the current package:
 
 ```sh
-VERSION=1.0.3
+VERSION=1.0.4
 case "$(dpkg --print-architecture)" in
   amd64) ARCH=amd64 ;;
   arm64) ARCH=arm64 ;;
@@ -72,7 +76,7 @@ WideMelon will appear in your application menu and can also be started with
 The AppImage works on most x86_64 and ARM64 Linux distributions:
 
 ```sh
-VERSION=1.0.3
+VERSION=1.0.4
 case "$(uname -m)" in
   x86_64) ARCH=x86_64 ;;
   aarch64|arm64) ARCH=aarch64 ;;

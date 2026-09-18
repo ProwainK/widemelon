@@ -222,9 +222,17 @@ profile changes require a restart.
 
 The phone bridge crops the centered physical bottom layer from the OpenGL
 output, downsamples it to native resolution, and uses a bounded asynchronous
-readback and encoder pipeline. Acknowledgements drop old frames instead of
-accumulating latency. A one-second heartbeat releases every remote button and
-touch and restores the desktop fallback after a failed connection.
+readback and encoder pipeline. Up to eight frames may be in flight so streaming
+does not wait for a network round trip after every frame. Beyond that limit,
+only the latest unsent frame is kept. The browser also replaces pending frames
+while decoding, and its acknowledgement retires any earlier skipped frames.
+Timeouts never add send credit to a stalled stream.
+
+Only one heartbeat probe waits for a reply at a time, so a delayed reply remains
+valid. Remote buttons and touch are released after one second without an input
+snapshot, independently of video acknowledgements and heartbeats. Three seconds
+of silence or an unacknowledged frame closes the connection and restores the
+desktop fallback. The phone reconnects automatically.
 
 ## Browser tests and diagnostics
 
@@ -247,18 +255,34 @@ The test reports per-stage FPS and decode/delivery timing and fails below 28.5
 displayed FPS. Enable it explicitly with
 `-DWIDEMELON_ENABLE_STREAM_BENCHMARK=ON` so ordinary builds do not depend on
 local browser DevTools configuration.
+Combine these options with `--gamepad` to also benchmark a held gamepad button
+and verify its release after disconnecting the simulated controller.
+
+The ordinary test suite includes delayed frame acknowledgements (180 ms),
+delayed heartbeat replies (900 ms), stalled decoding, bounded buffering,
+recovery to the newest pending frame, and independent input release:
+
+```sh
+ctest --test-dir build/tests -R 'phone_delayed' --output-on-failure
+```
 
 For a browser-only A/B comparison, set `WIDEMELON_BENCH_REVISION` to a commit
 hash; the test substitutes that revision's browser script while keeping the
 same bridge. `WIDEMELON_BENCH_QUALITY=100` and `WIDEMELON_BENCH_CPU=8` select
 JPEG quality and Chromium CPU throttling. Synthetic and loopback measurements
 do not prove Wi-Fi performance or gameplay GPU capture performance.
+Set `WIDEMELON_BENCH_ACK_DELAY_MS=180` and
+`WIDEMELON_BENCH_PONG_DELAY_MS=900` to exercise delayed replies in the real
+browser benchmark. These simulate response latency, not bandwidth loss; the
+benchmark also reports and rejects unexpected connection closures.
 
 The phone configurator also provides a generated test pattern, live bridge
 logs, frame/encode/drop/RTT metrics, optional rotating file logs, synchronous
 GPU readback for driver diagnosis, and a sanitized JSON diagnostics export.
 The export retains up to 60 recent timing samples, including capture, encode,
 send, acknowledgement, decode, input, GUI timer, and queued-socket metrics.
+Samples also report frames in flight and heartbeat round-trip time. Disconnect
+logs include the reason and close code at the default log level.
 Export during or immediately after an FPS drop, before restarting the bridge.
 
 These environment overrides change diagnostics only and never start the network
@@ -274,7 +298,7 @@ WIDEMELON_PHONE_LOG_LEVEL=debug WIDEMELON_PHONE_LOG_FILE=1 ./widemelon
 Windows and macOS downloads plus Linux x86_64 and ARM64 AppImages and Debian
 packages, runs tests, and packages exact dependency sources. A normal dispatch
 uploads development artifacts only. A dispatch from `main` with
-`publish_release` enabled builds all platforms once, creates `v1.0.3` on the
+`publish_release` enabled builds all platforms once, creates `v1.0.4` on the
 exact tested commit only after every package succeeds, publishes the GitHub
 Release, and then updates AUR. The tag must not already exist, and
 `WIDEMELON_VERSION` must match the intended release. `RELEASE_NOTES.md` is
@@ -294,13 +318,13 @@ and reruns skip repositories whose generated files are already current.
 Run `./scripts/build.sh` before committing release changes. Once committed:
 
 ```sh
-./scripts/package-source.sh 1.0.3
+./scripts/package-source.sh 1.0.4
 ```
 
 The native packaging command, after building and testing on that host, is:
 
 ```sh
-python scripts/package-native.py 1.0.3 macos-arm64 arm64-osx-13-release
+python scripts/package-native.py 1.0.4 macos-arm64 arm64-osx-13-release
 ```
 
 Use the matching platform/triplet for Windows or Intel macOS. Windows packaging
