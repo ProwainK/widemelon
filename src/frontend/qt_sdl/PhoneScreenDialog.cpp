@@ -43,7 +43,7 @@
 
 namespace
 {
-constexpr int kPairingQrSize = 152;
+constexpr int kPairingQrSize = 120;
 
 QString addressLabel(const QString& value)
 {
