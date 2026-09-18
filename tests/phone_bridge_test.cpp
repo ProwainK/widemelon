@@ -10,6 +10,7 @@
 #include <QGroupBox>
 #include <QPushButton>
 #include <QPlainTextEdit>
+#include <QScrollArea>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QElapsedTimer>
@@ -231,17 +232,27 @@ int main(int argc, char** argv)
     const auto originalQr = qrLabel->pixmap(Qt::ReturnByValue).cacheKey();
     CHECK(QMetaObject::invokeMethod(&dialog, "updateUi", Qt::DirectConnection));
     CHECK(qrLabel->pixmap(Qt::ReturnByValue).cacheKey() == originalQr);
+    auto networkSettings = dialog.findChild<QGroupBox*>("phoneNetworkSettings");
+    CHECK(networkSettings);
+    for (QWidget* ancestor = networkSettings->parentWidget(); ancestor; ancestor = ancestor->parentWidget())
+        CHECK(!qobject_cast<QScrollArea*>(ancestor));
     dialog.show();
     for (const QSize& size : {QSize(560, 680), QSize(480, 640)})
     {
         dialog.resize(size);
         application.processEvents();
+        if (dialog.height() > size.height())
+            std::cerr << "Phone dialog requested " << size.width() << 'x' << size.height()
+                      << " but remained " << dialog.width() << 'x' << dialog.height() << '\n';
         CHECK(dialog.height() <= size.height());
         auto bounds = [&](QWidget* widget) {
             return QRect(widget->mapTo(&dialog, QPoint()), widget->size());
         };
         CHECK(qrLabel->width() <= 168 && qrLabel->height() <= 168);
         CHECK(qrLabel->pixmap(Qt::ReturnByValue).width() <= qrLabel->width());
+        CHECK(dialog.rect().contains(bounds(networkSettings)));
+        for (QWidget* child : networkSettings->findChildren<QWidget*>())
+            if (child->isVisible()) CHECK(dialog.rect().contains(bounds(child)));
         for (QLabel* label : qrLabel->parentWidget()->findChildren<QLabel*>())
         {
             CHECK(dialog.rect().contains(bounds(label)));
@@ -253,15 +264,19 @@ int main(int argc, char** argv)
         for (QPushButton* button : dialog.findChildren<QPushButton*>())
             if (button->parentWidget() == &dialog) CHECK(dialog.rect().contains(bounds(button)));
     }
+    for (QGroupBox* group : dialog.findChildren<QGroupBox*>())
+        if (group->isCheckable()) group->setChecked(false);
+    application.processEvents();
     if (qEnvironmentVariableIsSet("WIDEMELON_PHONE_TEST_SCREENSHOT"))
     {
+        dialog.resize(560, 680);
         dialog.show();
         application.processEvents();
         CHECK(dialog.grab().save(qEnvironmentVariable("WIDEMELON_PHONE_TEST_SCREENSHOT")));
     }
     QPushButton* firewallGuide = nullptr;
     for (QPushButton* button : dialog.findChildren<QPushButton*>())
-        if (button->text() == "Firewall setup guide…") firewallGuide = button;
+        if (button->text() == "Firewall help…") firewallGuide = button;
     CHECK(firewallGuide && firewallGuide->isEnabled());
     QElapsedTimer guideTimer;
     guideTimer.start();
