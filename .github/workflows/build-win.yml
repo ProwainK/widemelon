@@ -1,0 +1,131 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: windows-2025
+    timeout-minutes: 180
+
+    env:
+      VCPKG_BINARY_SOURCES: clear
+      VCPKG_MAX_CONCURRENCY: 3
+      MELONDS_GIT_BRANCH: ${{ github.ref }}
+      MELONDS_GIT_HASH: ${{ github.sha }}
+      MELONDS_BUILD_PROVIDER: GitHub Actions
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Set up Visual Studio
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 9b965a116838c6cdcd36bca60d1b81b030c8ab8d
+          path: .deps/vcpkg
+
+      - name: Restore dependencies and sources
+        uses: actions/cache/restore@v4
+        id: deps
+        with:
+          path: |
+            .deps/vcpkg/downloads
+            build/native/vcpkg_installed
+          key: windows-${{ hashFiles('vcpkg.json', 'cmake/overlay-ports/**', 'cmake/overlay-triplets/**') }}
+          restore-keys: |
+            windows-
+
+      - name: Configure
+        run: |
+          cmake --preset release-windows-x86_64 \
+            -B build/native \
+            -DVCPKG_ROOT="$GITHUB_WORKSPACE/.deps/vcpkg" \
+            -DUSE_RECOMMENDED_TRIPLETS=OFF \
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-release \
+            -DVCPKG_HOST_TRIPLET=x64-windows-static-release \
+            -DENABLE_LTO_RELEASE=OFF \
+            -DMELONDS_EMBED_BUILD_INFO=ON
+
+      - name: Save dependencies and sources
+        if: always() && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .deps/vcpkg/downloads
+            build/native/vcpkg_installed
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+      - name: Build application
+        run: cmake --build build/native --parallel 3
+
+      - name: Package application
+        run: |
+          version=$(sed -n 's/^set(WIDEMELON_VERSION "\([0-9.]*\)")/\1/p' CMakeLists.txt)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+
+          python scripts/package-native.py \
+            "$version" \
+            windows-x86_64 \
+            x64-windows-static-release
+
+      - name: Verify Windows application
+        shell: pwsh
+        run: |
+          $version = (Select-String `
+            -Path CMakeLists.txt `
+            -Pattern '^set\(WIDEMELON_VERSION "([0-9.]+)"\)$'
+          ).Matches.Groups[1].Value
+
+          $path = "dist/WideMelon-$version-Windows-x86_64.exe"
+
+          if (-not (Test-Path -LiteralPath $path)) {
+            throw "Expected artifact not found: $path"
+          }
+
+          $application = Get-Item -LiteralPath $path
+
+          if ($application.VersionInfo.ProductName -ne "WideMelon") {
+            throw "Unexpected Windows product name: $($application.VersionInfo.ProductName)"
+          }
+
+          if ($application.VersionInfo.FileDescription -notlike "WideMelon*") {
+            throw "Unexpected Windows description: $($application.VersionInfo.FileDescription)"
+          }
+
+          & dumpbin /dependents $path
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin failed"
+          }
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: WideMelon-Windows-x86_64
+          path: dist/WideMelon-*-Windows-x86_64.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
