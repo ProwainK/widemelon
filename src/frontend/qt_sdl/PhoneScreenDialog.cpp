@@ -28,6 +28,7 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -42,7 +43,7 @@
 
 namespace
 {
-constexpr int kPairingQrSize = 168;
+constexpr int kPairingQrSize = 152;
 
 QString addressLabel(const QString& value)
 {
@@ -269,6 +270,9 @@ PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* paren
     status = new QLabel;
     address = new QLabel;
     address->setWordWrap(true);
+    // URLs have no natural word break. Let the form shrink them instead of
+    // making Qt 5 widen the entire dialog to their unbroken size hint.
+    address->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     address->setTextInteractionFlags(Qt::TextSelectableByMouse);
     sessionDetails->addRow("Status", status);
     auto addressRow = new QHBoxLayout;
@@ -303,6 +307,10 @@ PhoneScreenDialog::PhoneScreenDialog(PhoneBridgeManager* manager, QWidget* paren
     auto form = new QGridLayout(networkBox);
     auto interfaceRow = new QHBoxLayout;
     interfaceBox = new QComboBox;
+    // Adapter descriptions can be long. Qt 5 otherwise uses the longest item
+    // as the minimum width and prevents the dialog from fitting small screens.
+    interfaceBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    interfaceBox->setMinimumContentsLength(18);
     interfaceRow->addWidget(interfaceBox, 1);
     auto refresh = new QPushButton("Refresh");
     interfaceRow->addWidget(refresh);
