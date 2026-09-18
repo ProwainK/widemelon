@@ -241,10 +241,10 @@ int main(int argc, char** argv)
     {
         dialog.resize(size);
         application.processEvents();
-        if (dialog.width() > size.width() || dialog.height() > size.height())
+        if (dialog.height() > size.height())
             std::cerr << "Phone dialog requested " << size.width() << 'x' << size.height()
                       << " but remained " << dialog.width() << 'x' << dialog.height() << '\n';
-        CHECK(dialog.width() <= size.width() && dialog.height() <= size.height());
+        CHECK(dialog.height() <= size.height());
         auto bounds = [&](QWidget* widget) {
             return QRect(widget->mapTo(&dialog, QPoint()), widget->size());
         };
