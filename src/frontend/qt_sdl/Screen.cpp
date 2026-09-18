@@ -174,7 +174,7 @@ void ScreenPanel::setupScreenLayout()
     if (WideMelon::Enabled())
     {
         aspectTop = WideMelon::Width() / 256.f;
-        aspectBot = 1.f;
+        aspectBot = WideMelon::Width() / 256.f;
     }
 
     layout.Setup(w, h,
