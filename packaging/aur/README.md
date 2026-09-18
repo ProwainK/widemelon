@@ -13,7 +13,7 @@ each `.SRCINFO` from its `PKGBUILD`.
 Generate release-ready recipes inside an up-to-date Arch environment:
 
 ```sh
-python scripts/generate-aur.py 1.0.3 --output build/aur
+python scripts/generate-aur.py 1.0.4 --output build/aur
 ```
 
 The release workflow separately verifies and clean-builds all three generated
